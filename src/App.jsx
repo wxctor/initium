@@ -802,8 +802,8 @@ function CharacterForm({ user, onSave, onBack, initial }) {
     const data = clean({
       ...form,
       system: sys,
-      ownerId: user.uid,
-      ownerName: user.name,
+      ownerId: initial?.ownerId || user.uid,
+      ownerName: initial?.ownerName || user.name,
       updatedAt: Date.now(),
     });
     try {
@@ -2728,6 +2728,13 @@ function CombatArena({ user, room, setView }) {
   const dragging = useRef(null); // { id, startX, startY }
   const mapBgInputRef = useRef();
 
+  const [viewingSheet, setViewingSheet] = useState(null); // { type:"char"|"enemy", data:obj }
+
+  const [zoom, setZoom] = useState(0.65);
+  const MIN_ZOOM = 0.4;
+  const MAX_ZOOM = 1.5;
+  const ZOOM_STEP = 0.15;
+
   // ── 1) Listener RTDB ──────────────────────────────────────
   useEffect(() => {
     const unsub = listenCombat(roomId, (data) => {
@@ -2801,16 +2808,16 @@ function CombatArena({ user, room, setView }) {
     return token.ownerId === user.uid; // player: só o próprio
   };
 
-  const getCanvasPos = (e) => {
-    if (!mapRef.current) return { x: MAP_W / 2, y: MAP_H / 2 };
-    const rect = mapRef.current.getBoundingClientRect();
-    const cx = e.touches ? e.touches[0].clientX : e.clientX;
-    const cy = e.touches ? e.touches[0].clientY : e.clientY;
-    return {
-      x: Math.max(22, Math.min(MAP_W - 22, cx - rect.left)),
-      y: Math.max(22, Math.min(MAP_H - 22, cy - rect.top)),
-    };
+const getCanvasPos = (e) => {
+  if (!mapRef.current) return { x: MAP_W / 2, y: MAP_H / 2 };
+  const rect = mapRef.current.getBoundingClientRect();
+  const cx = e.touches ? e.touches[0].clientX : e.clientX;
+  const cy = e.touches ? e.touches[0].clientY : e.clientY;
+  return {
+    x: Math.max(22, Math.min(MAP_W - 22, (cx - rect.left) / zoom)),
+    y: Math.max(22, Math.min(MAP_H - 22, (cy - rect.top) / zoom)),
   };
+};
 
   const onTokenPointerDown = (e, tokenId) => {
     const tok = tokens[tokenId];
@@ -2863,22 +2870,47 @@ function CombatArena({ user, room, setView }) {
 
   const rollExpr = async () => {
     const raw = diceExpr.trim().toLowerCase();
-    const m = raw.match(/^(\d+)d(\d+)([+-]\d+)?$/);
-    if (!m) {
-      setDiceExprResult("Formato: NdS ou NdS+B  (ex: 3d8, 10d20+5)");
+
+    // Regex que captura múltiplos grupos de dados e bônus
+    // Suporta: 1d6+1d8, 2d6+3, 1d8+2+1d6, 3d4-1, etc.
+    const dicePattern = /(\d+)d(\d+)/g;
+    const bonusPattern = /([+-]\d+)(?!d)/g;
+
+    const diceMatches = [...raw.matchAll(dicePattern)];
+    if (diceMatches.length === 0) {
+      setDiceExprResult("Formato inválido. Ex: 1d6+1d8, 2d6+3");
       return;
     }
-    const n = Math.min(parseInt(m[1]), 99),
-      s = Math.min(parseInt(m[2]), 1000),
-      bonus = m[3] ? parseInt(m[3]) : 0;
-    const results = Array.from({ length: n }, () => rollDie(s));
-    const total = results.reduce((a, b) => a + b, 0) + bonus;
-    const label = bonus
-      ? `${n}d${s}${bonus > 0 ? "+" : ""}${bonus}`
-      : `${n}d${s}`;
-    setDiceExprResult({ label, results, total, bonus });
+
+    let total = 0;
+    const parts = [];
+
+    // Rola cada grupo de dados
+    for (const m of diceMatches) {
+      const n = Math.min(parseInt(m[1]), 99);
+      const s = Math.min(parseInt(m[2]), 1000);
+      const rolls = Array.from({ length: n }, () => rollDie(s));
+      const sum = rolls.reduce((a, b) => a + b, 0);
+      total += sum;
+      parts.push(`${n}d${s}:[${rolls.join("+")}]=${sum}`);
+    }
+
+    // Soma bônus fixos (números sem dado)
+    const bonusOnly = raw.replace(/\d+d\d+/g, "");
+    const bonusMatches = [...bonusOnly.matchAll(/([+-]\d+)/g)];
+    let bonus = 0;
+    for (const m of bonusMatches) {
+      bonus += parseInt(m[1]);
+    }
+    total += bonus;
+
+    const label =
+      diceMatches.map((m) => `${m[1]}d${m[2]}`).join("+") +
+      (bonus !== 0 ? (bonus > 0 ? `+${bonus}` : `${bonus}`) : "");
+
+    setDiceExprResult({ label, parts, total, bonus });
     await pushLog(
-      `${user.name} rolou ${label}: [${results.join(", ")}]${bonus ? " + " + bonus : ""} = ${total}`,
+      `${user.name} rolou ${label}: ${parts.join(" | ")}${bonus ? ` + ${bonus}` : ""} = ${total}`,
     );
   };
 
@@ -2888,9 +2920,19 @@ function CombatArena({ user, room, setView }) {
     const sz = tokenSize(source.isBoss);
     const x = 600 + Math.random() * (MAP_W - 1200);
     const y = 400 + Math.random() * (MAP_H - 800);
+
+    // Conta quantos tokens com o mesmo nome já existem
+    const sameNameCount = Object.values(tokens).filter(
+      (t) => t.name === source.name || t.name.startsWith(source.name + " "),
+    ).length;
+
+    // Nome final com numeração se já houver duplicatas
+    const tokenName =
+      sameNameCount === 0 ? source.name : `${source.name} ${sameNameCount + 1}`;
+
     const token = clean({
       id,
-      name: source.name,
+      name: tokenName, // ← usa o nome com número
       avatar: source.avatar || "fi fi-rr-sword",
       avatarUrl: source.avatarUrl || null,
       isEnemy,
@@ -2902,9 +2944,10 @@ function CombatArena({ user, room, setView }) {
       x,
       y,
     });
+
     await rtdbUpdate(`${rtdbPath}/tokens/${id}`, token);
     await pushLog(
-      `Token "${source.name}"${source.isBoss ? " [BOSS]" : ""} adicionado ao mapa`,
+      `Token "${tokenName}"${source.isBoss ? " [BOSS]" : ""} adicionado ao mapa`,
     );
     setShowAddToken(false);
   };
@@ -3051,782 +3094,861 @@ function CombatArena({ user, room, setView }) {
             }}
           >
             <div
-              ref={mapRef}
               style={{
-                width: MAP_W + "px",
-                height: MAP_H + "px",
+                width: MAP_W * zoom,
+                height: MAP_H * zoom,
                 position: "relative",
                 flexShrink: 0,
-                background: mapBg
-                  ? `url(${mapBg}) left top / cover no-repeat`
-                  : "linear-gradient(135deg,#0d1117 0%,#1a1030 40%,#0d1520 70%,#080b12 100%)",
               }}
             >
-              <svg
+              <div
+                ref={mapRef}
                 style={{
+                  width: MAP_W + "px",
+                  height: MAP_H + "px",
                   position: "absolute",
-                  inset: 0,
-                  width: "100%",
-                  height: "100%",
-                  opacity: 0.18,
-                  pointerEvents: "none",
+                  top: 0,
+                  left: 0,
+                  transform: `scale(${zoom})`,
+                  transformOrigin: "top left",
+                  background: mapBg
+                    ? `url(${mapBg}) left top / cover no-repeat`
+                    : "linear-gradient(135deg,#0d1117 0%,#1a1030 40%,#0d1520 70%,#080b12 100%)",
                 }}
               >
-                <defs>
-                  <pattern
-                    id="combatgrid"
-                    width={CELL}
-                    height={CELL}
-                    patternUnits="userSpaceOnUse"
-                  >
-                    <path
-                      d={`M ${CELL} 0 L 0 0 0 ${CELL}`}
-                      fill="none"
-                      stroke="#fff"
-                      strokeWidth="1"
-                    />
-                  </pattern>
-                </defs>
-                <rect width="100%" height="100%" fill="url(#combatgrid)" />
-              </svg>
-              {!mapBg && (
-                <div
+                <svg
                   style={{
                     position: "absolute",
-                    top: "50%",
-                    left: "50%",
-                    transform: "translate(-50%,-50%)",
-                    opacity: 0.15,
-                    textAlign: "center",
+                    inset: 0,
+                    width: "100%",
+                    height: "100%",
+                    opacity: 0.18,
                     pointerEvents: "none",
-                    color: "var(--text2)",
-                    fontSize: 14,
                   }}
                 >
-                  <div style={{ fontSize: 48, marginBottom: 8 }}>
-                    <i
-                      className="fi fi-rr-map"
-                      style={{ fontSize: 48, color: "var(--text3)" }}
-                    ></i>
-                  </div>
-                  Arrasta para explorar
-                </div>
-              )}
-              {tokenArr.map((t) => {
-                const draggable = canDrag(t);
-                const dead = isDead(t);
-                const pct = Math.max(
-                  0,
-                  Math.min(
-                    100,
-                    (parseInt(t.hp || 0) / parseInt(t.maxHp || 1)) * 100,
-                  ),
-                );
-                const sz = t.tokenSize || tokenSize(t.isBoss);
-                const r = sz / 2 + 1;
-                const circ = 2 * Math.PI * r;
-                return (
+                  <defs>
+                    <pattern
+                      id="combatgrid"
+                      width={CELL}
+                      height={CELL}
+                      patternUnits="userSpaceOnUse"
+                    >
+                      <path
+                        d={`M ${CELL} 0 L 0 0 0 ${CELL}`}
+                        fill="none"
+                        stroke="#fff"
+                        strokeWidth="1"
+                      />
+                    </pattern>
+                  </defs>
+                  <rect width="100%" height="100%" fill="url(#combatgrid)" />
+                </svg>
+                {!mapBg && (
                   <div
-                    key={t.id}
                     style={{
                       position: "absolute",
-                      left: (t.x || MAP_W / 2) + "px",
-                      top: (t.y || MAP_H / 2) + "px",
+                      top: "50%",
+                      left: "50%",
                       transform: "translate(-50%,-50%)",
-                      width: sz + 10,
-                      height: sz + 10,
-                      zIndex: t.isBoss ? 15 : 10,
-                      cursor: draggable ? "grab" : "default",
-                      userSelect: "none",
-                      touchAction: "none",
-                      opacity: dead ? 0.5 : 1,
-                      filter: dead ? "grayscale(1)" : "none",
-                      transition: "opacity .4s,filter .4s",
+                      opacity: 0.15,
+                      textAlign: "center",
+                      pointerEvents: "none",
+                      color: "var(--text2)",
+                      fontSize: 14,
                     }}
-                    onMouseDown={(e) => onTokenPointerDown(e, t.id)}
-                    onTouchStart={(e) => onTokenPointerDown(e, t.id)}
                   >
-                    {t.isBoss && !dead && (
-                      <div
+                    <div style={{ fontSize: 48, marginBottom: 8 }}>
+                      <i
+                        className="fi fi-rr-map"
+                        style={{ fontSize: 48, color: "var(--text3)" }}
+                      ></i>
+                    </div>
+                    Arrasta para explorar
+                  </div>
+                )}
+                {tokenArr.map((t) => {
+                  const draggable = canDrag(t);
+                  const dead = isDead(t);
+                  const pct = Math.max(
+                    0,
+                    Math.min(
+                      100,
+                      (parseInt(t.hp || 0) / parseInt(t.maxHp || 1)) * 100,
+                    ),
+                  );
+                  const sz = t.tokenSize || tokenSize(t.isBoss);
+                  const r = sz / 2 + 1;
+                  const circ = 2 * Math.PI * r;
+                  return (
+                    <div
+                      key={t.id}
+                      style={{
+                        position: "absolute",
+                        left: (t.x || MAP_W / 2) + "px",
+                        top: (t.y || MAP_H / 2) + "px",
+                        transform: "translate(-50%,-50%)",
+                        width: sz + 10,
+                        height: sz + 10,
+                        zIndex: t.isBoss ? 15 : 10,
+                        cursor: draggable ? "grab" : "default",
+                        userSelect: "none",
+                        touchAction: "none",
+                        opacity: dead ? 0.5 : 1,
+                        filter: dead ? "grayscale(1)" : "none",
+                        transition: "opacity .4s,filter .4s",
+                      }}
+                      onMouseDown={(e) => onTokenPointerDown(e, t.id)}
+                      onTouchStart={(e) => onTokenPointerDown(e, t.id)}
+                    >
+                      {t.isBoss && !dead && (
+                        <div
+                          style={{
+                            position: "absolute",
+                            inset: -4,
+                            borderRadius: "50%",
+                            boxShadow: "0 0 18px 4px rgba(192,57,43,.55)",
+                            pointerEvents: "none",
+                          }}
+                        />
+                      )}
+                      <svg
+                        width={sz + 10}
+                        height={sz + 10}
                         style={{
                           position: "absolute",
-                          inset: -4,
-                          borderRadius: "50%",
-                          boxShadow: "0 0 18px 4px rgba(192,57,43,.55)",
+                          inset: 0,
                           pointerEvents: "none",
                         }}
-                      />
-                    )}
-                    <svg
-                      width={sz + 10}
-                      height={sz + 10}
-                      style={{
-                        position: "absolute",
-                        inset: 0,
-                        pointerEvents: "none",
-                      }}
-                    >
-                      <circle
-                        cx={(sz + 10) / 2}
-                        cy={(sz + 10) / 2}
-                        r={r}
-                        fill="none"
-                        stroke={t.isEnemy ? "#6b1520" : "#0d2040"}
-                        strokeWidth={t.isBoss ? 4 : 3}
-                        opacity=".6"
-                      />
-                      <circle
-                        cx={(sz + 10) / 2}
-                        cy={(sz + 10) / 2}
-                        r={r}
-                        fill="none"
-                        stroke={
-                          dead ? "#444" : t.isEnemy ? "#e05070" : "#4a90d9"
-                        }
-                        strokeWidth={t.isBoss ? 4 : 3}
-                        strokeDasharray={`${(circ * pct) / 100} ${circ}`}
-                        strokeLinecap="round"
-                        style={{
-                          transform: `rotate(-90deg)`,
-                          transformOrigin: `${(sz + 10) / 2}px ${(sz + 10) / 2}px`,
-                        }}
-                      />
-                    </svg>
-                    <div
-                      style={{
-                        position: "absolute",
-                        inset: 5,
-                        borderRadius: "50%",
-                        overflow: "hidden",
-                        border: `${t.isBoss ? 3 : 2}px solid ${dead ? "#444" : t.isEnemy ? "#c0392b" : "#2a5aaa"}`,
-                        background: dead
-                          ? "rgba(40,40,40,.85)"
-                          : t.isEnemy
-                            ? "rgba(155,35,53,.85)"
-                            : "rgba(26,58,110,.85)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                      }}
-                    >
-                      <TokenFace t={t} size={sz - 10} />
-                    </div>
-                    {dead && (
+                      >
+                        <circle
+                          cx={(sz + 10) / 2}
+                          cy={(sz + 10) / 2}
+                          r={r}
+                          fill="none"
+                          stroke={t.isEnemy ? "#6b1520" : "#0d2040"}
+                          strokeWidth={t.isBoss ? 4 : 3}
+                          opacity=".6"
+                        />
+                        <circle
+                          cx={(sz + 10) / 2}
+                          cy={(sz + 10) / 2}
+                          r={r}
+                          fill="none"
+                          stroke={
+                            dead ? "#444" : t.isEnemy ? "#e05070" : "#4a90d9"
+                          }
+                          strokeWidth={t.isBoss ? 4 : 3}
+                          strokeDasharray={`${(circ * pct) / 100} ${circ}`}
+                          strokeLinecap="round"
+                          style={{
+                            transform: `rotate(-90deg)`,
+                            transformOrigin: `${(sz + 10) / 2}px ${(sz + 10) / 2}px`,
+                          }}
+                        />
+                      </svg>
                       <div
                         style={{
                           position: "absolute",
                           inset: 5,
                           borderRadius: "50%",
+                          overflow: "hidden",
+                          border: `${t.isBoss ? 3 : 2}px solid ${dead ? "#444" : t.isEnemy ? "#c0392b" : "#2a5aaa"}`,
+                          background: dead
+                            ? "rgba(40,40,40,.85)"
+                            : t.isEnemy
+                              ? "rgba(155,35,53,.85)"
+                              : "rgba(26,58,110,.85)",
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
-                          background: "rgba(0,0,0,.5)",
-                          fontSize: sz * 0.28,
-                          pointerEvents: "none",
-                          zIndex: 2,
                         }}
                       >
-                        <i className="fi fi-rr-skull"></i>
+                        <TokenFace t={t} size={sz - 10} />
                       </div>
-                    )}
-                    <div
-                      style={{
-                        position: "absolute",
-                        top: "100%",
-                        left: "50%",
-                        transform: "translateX(-50%)",
-                        whiteSpace: "nowrap",
-                        fontSize: t.isBoss ? 11 : 10,
-                        color: dead ? "#555" : t.isBoss ? "#e87890" : "#fff",
-                        textShadow: "0 1px 3px #000",
-                        pointerEvents: "none",
-                        marginTop: 2,
-                        fontFamily: "Cinzel,serif",
-                      }}
-                    >
-                      {dead ? (
-                        <>
-                          <i
-                            className="fi fi-rr-skull"
-                            style={{ marginRight: 3 }}
-                          ></i>
-                        </>
-                      ) : t.isBoss ? (
-                        <>
-                          <i
-                            className="fi fi-rr-crown"
-                            style={{ marginRight: 3 }}
-                          ></i>
-                        </>
-                      ) : (
-                        ""
+                      {dead && (
+                        <div
+                          style={{
+                            position: "absolute",
+                            inset: 5,
+                            borderRadius: "50%",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            background: "rgba(0,0,0,.5)",
+                            fontSize: sz * 0.28,
+                            pointerEvents: "none",
+                            zIndex: 2,
+                          }}
+                        >
+                          <i className="fi fi-rr-skull"></i>
+                        </div>
                       )}
-                      {(t.name || "").slice(0, 14)}
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: "100%",
+                          left: "50%",
+                          transform: "translateX(-50%)",
+                          whiteSpace: "nowrap",
+                          fontSize: t.isBoss ? 11 : 10,
+                          color: dead ? "#555" : t.isBoss ? "#e87890" : "#fff",
+                          textShadow: "0 1px 3px #000",
+                          pointerEvents: "none",
+                          marginTop: 2,
+                          fontFamily: "Cinzel,serif",
+                        }}
+                      >
+                        {dead ? (
+                          <>
+                            <i
+                              className="fi fi-rr-skull"
+                              style={{ marginRight: 3 }}
+                            ></i>
+                          </>
+                        ) : t.isBoss ? (
+                          <>
+                            <i
+                              className="fi fi-rr-crown"
+                              style={{ marginRight: 3 }}
+                            ></i>
+                          </>
+                        ) : (
+                          ""
+                        )}
+                        {(t.name || "").slice(0, 14)}
+                      </div>
+                      {(!t.isEnemy || isMaster) && (
+                        <div
+                          style={{
+                            position: "absolute",
+                            bottom: -1,
+                            right: -6,
+                            background: dead ? "#1a1a1a" : "var(--surface)",
+                            border: `1px solid ${dead ? "#333" : "var(--border)"}`,
+                            borderRadius: 10,
+                            padding: "1px 5px",
+                            fontSize: 10,
+                            color: dead ? "#555" : "var(--text2)",
+                            fontFamily: "Cinzel,serif",
+                            pointerEvents: "none",
+                          }}
+                        >
+                          {t.hp}
+                        </div>
+                      )}
                     </div>
-                    <div
-                      style={{
-                        position: "absolute",
-                        bottom: -1,
-                        right: -6,
-                        background: dead ? "#1a1a1a" : "var(--surface)",
-                        border: `1px solid ${dead ? "#333" : "var(--border)"}`,
-                        borderRadius: 10,
-                        padding: "1px 5px",
-                        fontSize: 10,
-                        color: dead ? "#555" : "var(--text2)",
-                        fontFamily: "Cinzel,serif",
-                        pointerEvents: "none",
-                      }}
-                    >
-                      {t.hp}
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
-          </div>
-          {/* ── FAB: abre menu lateral ──────────────────────── */}
-          <button
-            onClick={() => setShowSideMenu((v) => !v)}
-            style={{
-              position: "fixed",
-              bottom: 26,
-              right: 10,
-              zIndex: 55,
-              width: 52,
-              height: 52,
-              borderRadius: "20%",
-              background: "linear-gradient(135deg,var(--gold-d),var(--gold))",
-              border: "none",
-              color: "#fff",
-              fontSize: 22,
-              boxShadow: "0 4px 20px rgba(0,0,0,.5)",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <img
-              src="initium-white.png"
+            {/* Botões de zoom */}
+<div style={{
+  position:"fixed",
+  bottom:90,
+  left:10,
+  zIndex:55,
+  display:"flex",
+  flexDirection:"column",
+  gap:6,
+}}>
+  <button
+    onClick={() => setZoom(z => Math.min(MAX_ZOOM, parseFloat((z + ZOOM_STEP).toFixed(2))))}
+    style={{
+      width:40, height:40, borderRadius:10,
+      background:"rgba(13,18,32,.95)",
+      border:"1px solid var(--border2)",
+      color:"var(--gold)",
+      fontSize:22, fontWeight:600,
+      cursor:"pointer",
+      display:"flex", alignItems:"center", justifyContent:"center",
+      boxShadow:"0 2px 8px rgba(0,0,0,.4)",
+    }}>
+    +
+  </button>
+  <button
+    onClick={() => setZoom(z => Math.max(MIN_ZOOM, parseFloat((z - ZOOM_STEP).toFixed(2))))}
+    style={{
+      width:40, height:40, borderRadius:10,
+      background:"rgba(13,18,32,.95)",
+      border:"1px solid var(--border2)",
+      color:"var(--gold)",
+      fontSize:22, fontWeight:600,
+      cursor:"pointer",
+      display:"flex", alignItems:"center", justifyContent:"center",
+      boxShadow:"0 2px 8px rgba(0,0,0,.4)",
+    }}>
+    −
+  </button>
+  {/* Indicador de zoom atual */}
+  <div style={{
+    textAlign:"center",
+    fontSize:9,
+    color:"var(--text3)",
+    fontFamily:"Cinzel,serif",
+  }}>
+    {Math.round(zoom * 100)}%
+  </div>
+</div>
+            {/* ── FAB: abre menu lateral ──────────────────────── */}
+            <button
+              onClick={() => setShowSideMenu((v) => !v)}
               style={{
-                width: "45px",
-                height: "auto",
-                verticalAlign: "middle",
+                position: "fixed",
+                bottom: 26,
+                right: 10,
+                zIndex: 55,
+                width: 52,
+                height: 52,
+                borderRadius: "20%",
+                background: "linear-gradient(135deg,var(--gold-d),var(--gold))",
+                border: "none",
+                color: "#fff",
+                fontSize: 22,
+                boxShadow: "0 4px 20px rgba(0,0,0,.5)",
+                cursor: "pointer",
+                display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
               }}
-            ></img>
-          </button>
+            >
+              <img
+                src="initium-white.png"
+                style={{
+                  width: "45px",
+                  height: "auto",
+                  verticalAlign: "middle",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              ></img>
+            </button>
 
-          {/* ── Painel lateral unificado ─────────────────────── */}
-          {showSideMenu && (
-            <>
-              {/* Overlay escurecido */}
-              <div
-                onClick={() => setShowSideMenu(false)}
-                style={{
-                  position: "fixed",
-                  inset: 0,
-                  background: "rgba(0,0,0,.5)",
-                  zIndex: 56,
-                }}
-              />
-              {/* Painel */}
-              <div
-                style={{
-                  position: "fixed",
-                  top: 0,
-                  right: 0,
-                  bottom: 0,
-                  zIndex: 57,
-                  width: "82vw",
-                  maxWidth: 320,
-                  background: "#0d1220",
-                  borderLeft: "1px solid var(--border2)",
-                  display: "flex",
-                  flexDirection: "column",
-                  boxShadow: "-8px 0 32px rgba(0,0,0,.6)",
-                }}
-              >
-                {/* Header */}
+            {/* ── Painel lateral unificado ─────────────────────── */}
+            {showSideMenu && (
+              <>
+                {/* Overlay escurecido */}
+                <div
+                  onClick={() => setShowSideMenu(false)}
+                  style={{
+                    position: "fixed",
+                    inset: 0,
+                    background: "rgba(0,0,0,.5)",
+                    zIndex: 56,
+                  }}
+                />
+                {/* Painel */}
                 <div
                   style={{
-                    padding: "16px",
-                    borderBottom: "1px solid var(--border)",
+                    position: "fixed",
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                    zIndex: 57,
+                    width: "82vw",
+                    maxWidth: 320,
+                    background: "#0d1220",
+                    borderLeft: "1px solid var(--border2)",
                     display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
+                    flexDirection: "column",
+                    boxShadow: "-8px 0 32px rgba(0,0,0,.6)",
                   }}
                 >
-                  <span
+                  {/* Header */}
+                  <div
                     style={{
-                      fontFamily: "Cinzel,serif",
-                      color: "var(--gold-l)",
-                      fontSize: 15,
-                      letterSpacing: ".06em",
+                      padding: "16px",
+                      borderBottom: "1px solid var(--border)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
                     }}
                   >
-                    Controles
-                  </span>
-                  <button
-                    className="btn-icon"
-                    style={{ width: 32, height: 32 }}
-                    onClick={() => setShowSideMenu(false)}
-                  >
-                    <i className="fi fi-rr-cross-small"></i>
-                  </button>
-                </div>
-
-                {/* Sub-tabs */}
-                <div
-                  style={{
-                    display: "flex",
-                    borderBottom: "1px solid var(--border)",
-                    flexShrink: 0,
-                  }}
-                >
-                  {[
-                    { k: "initiative", label: "⚡ Init" },
-                    { k: "dice", label: "🎲 Dados" },
-                    { k: "map", label: "🖼 Mapa" },
-                  ].map((item) => (
-                    <button
-                      key={item.k}
-                      onClick={() => setSideMenuTab(item.k)}
+                    <span
                       style={{
-                        flex: 1,
-                        padding: "10px 4px",
-                        border: "none",
-                        cursor: "pointer",
                         fontFamily: "Cinzel,serif",
-                        fontSize: 11,
-                        letterSpacing: ".04em",
-                        background: "transparent",
-                        color:
-                          sideMenuTab === item.k
-                            ? "var(--gold-l)"
-                            : "var(--text3)",
-                        borderBottom:
-                          sideMenuTab === item.k
-                            ? "2px solid var(--gold)"
-                            : "2px solid transparent",
-                        transition: "color .15s",
+                        color: "var(--gold-l)",
+                        fontSize: 15,
+                        letterSpacing: ".06em",
                       }}
                     >
-                      {item.label}
+                      Controles
+                    </span>
+                    <button
+                      className="btn-icon"
+                      style={{ width: 32, height: 32 }}
+                      onClick={() => setShowSideMenu(false)}
+                    >
+                      <i className="fi fi-rr-cross-small"></i>
                     </button>
-                  ))}
-                </div>
+                  </div>
 
-                {/* Conteúdo rolável */}
-                <div style={{ flex: 1, overflowY: "auto", padding: 14 }}>
-                  {/* ── INICIATIVA ── */}
-                  {sideMenuTab === "initiative" && (
-                    <div>
-                      <div
+                  {/* Sub-tabs */}
+                  <div
+                    style={{
+                      display: "flex",
+                      borderBottom: "1px solid var(--border)",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {[
+                      { k: "initiative", label: "⚡ Init" },
+                      { k: "dice", label: "🎲 Dados" },
+                      { k: "map", label: "🖼 Mapa" },
+                    ].map((item) => (
+                      <button
+                        key={item.k}
+                        onClick={() => setSideMenuTab(item.k)}
                         style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          marginBottom: 10,
+                          flex: 1,
+                          padding: "10px 4px",
+                          border: "none",
+                          cursor: "pointer",
+                          fontFamily: "Cinzel,serif",
+                          fontSize: 11,
+                          letterSpacing: ".04em",
+                          background: "transparent",
+                          color:
+                            sideMenuTab === item.k
+                              ? "var(--gold-l)"
+                              : "var(--text3)",
+                          borderBottom:
+                            sideMenuTab === item.k
+                              ? "2px solid var(--gold)"
+                              : "2px solid transparent",
+                          transition: "color .15s",
                         }}
                       >
-                        <div>
-                          <div
-                            style={{
-                              fontFamily: "Cinzel,serif",
-                              fontSize: 13,
-                              color: "var(--gold-l)",
-                            }}
-                          >
-                            Ordem de Iniciativa
-                          </div>
-                          <div style={{ fontSize: 11, color: "var(--text3)" }}>
-                            Round {round} · {SYS_NAME}
-                          </div>
-                        </div>
-                        <div style={{ display: "flex", gap: 6 }}>
-                          {isMaster && (
-                            <button
-                              className="btn-gold btn-sm"
-                              style={{ padding: "5px 10px", fontSize: 11 }}
-                              onClick={() => setShowAddInit(true)}
-                            >
-                              +
-                            </button>
-                          )}
-                          {isMaster && initiative.length > 0 && (
-                            <button
-                              className="btn-outline btn-sm"
-                              style={{ padding: "5px 10px", fontSize: 11 }}
-                              onClick={doNextTurn}
-                            >
-                              ▶
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      {initiative.length === 0 && (
-                        <p style={{ color: "var(--text3)", fontSize: 13 }}>
-                          Adiciona tokens ao mapa primeiro.
-                        </p>
-                      )}
-                      {initiative.map((p, i) => (
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Conteúdo rolável */}
+                  <div style={{ flex: 1, overflowY: "auto", padding: 14 }}>
+                    {/* ── INICIATIVA ── */}
+                    {sideMenuTab === "initiative" && (
+                      <div>
                         <div
-                          key={p.id}
                           style={{
                             display: "flex",
                             alignItems: "center",
-                            gap: 8,
-                            padding: "7px 6px",
-                            borderRadius: 8,
-                            marginBottom: 4,
-                            background:
-                              i === currentTurn
-                                ? "rgba(109,69,255,.12)"
-                                : "transparent",
-                            border:
-                              i === currentTurn
-                                ? "1px solid var(--gold-d)"
-                                : "1px solid transparent",
+                            justifyContent: "space-between",
+                            marginBottom: 10,
                           }}
                         >
-                          <div
-                            style={{
-                              width: 34,
-                              height: 34,
-                              borderRadius: "50%",
-                              flexShrink: 0,
-                              overflow: "hidden",
-                              border: `2px solid ${p.isEnemy ? "#c0392b" : "#2a5aaa"}`,
-                              background: p.isEnemy
-                                ? "rgba(155,35,53,.8)"
-                                : "rgba(26,58,110,.8)",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              fontSize: 16,
-                            }}
-                          >
-                            {p.avatarUrl ? (
-                              <img
-                                src={p.avatarUrl}
-                                style={{
-                                  width: "100%",
-                                  height: "100%",
-                                  objectFit: "cover",
-                                }}
-                                alt=""
-                              />
-                            ) : p.avatar?.startsWith("fi ") ? (
-                              <i className={p.avatar}></i>
-                            ) : (
-                              <i className="fi fi-rr-sword"></i>
+                          <div>
+                            <div
+                              style={{
+                                fontFamily: "Cinzel,serif",
+                                fontSize: 13,
+                                color: "var(--gold-l)",
+                              }}
+                            >
+                              Ordem de Iniciativa
+                            </div>
+                            <div
+                              style={{ fontSize: 11, color: "var(--text3)" }}
+                            >
+                              Round {round} · {SYS_NAME}
+                            </div>
+                          </div>
+                          <div style={{ display: "flex", gap: 6 }}>
+                            {isMaster && (
+                              <button
+                                className="btn-gold btn-sm"
+                                style={{ padding: "5px 10px", fontSize: 11 }}
+                                onClick={() => setShowAddInit(true)}
+                              >
+                                +
+                              </button>
+                            )}
+                            {isMaster && initiative.length > 0 && (
+                              <button
+                                className="btn-outline btn-sm"
+                                style={{ padding: "5px 10px", fontSize: 11 }}
+                                onClick={doNextTurn}
+                              >
+                                ▶
+                              </button>
                             )}
                           </div>
-                          <div style={{ flex: 1, minWidth: 0 }}>
+                        </div>
+                        {initiative.length === 0 && (
+                          <p style={{ color: "var(--text3)", fontSize: 13 }}>
+                            Adiciona tokens ao mapa primeiro.
+                          </p>
+                        )}
+                        {initiative.map((p, i) => (
+                          <div
+                            key={p.id}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
+                              padding: "7px 6px",
+                              borderRadius: 8,
+                              marginBottom: 4,
+                              background:
+                                i === currentTurn
+                                  ? "rgba(109,69,255,.12)"
+                                  : "transparent",
+                              border:
+                                i === currentTurn
+                                  ? "1px solid var(--gold-d)"
+                                  : "1px solid transparent",
+                            }}
+                          >
                             <div
                               style={{
-                                fontFamily: "Cinzel,serif",
-                                fontSize: 12,
-                                color:
-                                  i === currentTurn
-                                    ? "var(--gold-l)"
-                                    : "var(--text)",
+                                width: 34,
+                                height: 34,
+                                borderRadius: "50%",
+                                flexShrink: 0,
                                 overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
+                                border: `2px solid ${p.isEnemy ? "#c0392b" : "#2a5aaa"}`,
+                                background: p.isEnemy
+                                  ? "rgba(155,35,53,.8)"
+                                  : "rgba(26,58,110,.8)",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                fontSize: 16,
                               }}
                             >
-                              {p.name}
+                              {p.avatarUrl ? (
+                                <img
+                                  src={p.avatarUrl}
+                                  style={{
+                                    width: "100%",
+                                    height: "100%",
+                                    objectFit: "cover",
+                                  }}
+                                  alt=""
+                                />
+                              ) : p.avatar?.startsWith("fi ") ? (
+                                <i className={p.avatar}></i>
+                              ) : (
+                                <i className="fi fi-rr-sword"></i>
+                              )}
                             </div>
-                            <div
-                              style={{ fontSize: 10, color: "var(--text3)" }}
-                            >
-                              Init {p.roll}
-                            </div>
-                          </div>
-                          {i === currentTurn && (
-                            <span
-                              style={{ color: "var(--gold)", fontSize: 13 }}
-                            >
-                              ▶
-                            </span>
-                          )}
-                          {isMaster && (
-                            <button
-                              onClick={() => removeInit(p.id)}
-                              style={{
-                                background: "transparent",
-                                border: "none",
-                                color: "var(--text3)",
-                                cursor: "pointer",
-                                fontSize: 14,
-                                padding: 2,
-                              }}
-                            >
-                              <i className="fi fi-rr-cross-small"></i>
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* ── DADOS ── */}
-                  {sideMenuTab === "dice" && (
-                    <div>
-                      {diceResult && (
-                        <div
-                          style={{
-                            background: "var(--surface)",
-                            borderRadius: 10,
-                            padding: "12px",
-                            textAlign: "center",
-                            marginBottom: 12,
-                          }}
-                        >
-                          <div
-                            style={{
-                              color: "var(--text3)",
-                              fontSize: 11,
-                              marginBottom: 2,
-                            }}
-                          >
-                            {diceResult.count}d{diceResult.sides}
-                          </div>
-                          <div
-                            style={{
-                              fontFamily: "Cinzel,serif",
-                              fontSize: 36,
-                              color: "var(--gold-l)",
-                            }}
-                          >
-                            {diceResult.total}
-                          </div>
-                          {diceResult.results.length > 1 && (
-                            <div
-                              style={{ color: "var(--text3)", fontSize: 11 }}
-                            >
-                              [{diceResult.results.join("+")}]
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      <div style={{ marginBottom: 10 }}>
-                        <div className="label mb4">Quantidade</div>
-                        <div style={{ display: "flex", gap: 4 }}>
-                          {[1, 2, 3, 4, 5, 6].map((n) => (
-                            <button
-                              key={n}
-                              onClick={() => setDiceCount(n)}
-                              style={{
-                                flex: 1,
-                                padding: "6px 2px",
-                                borderRadius: 6,
-                                fontSize: 12,
-                                fontFamily: "Cinzel,serif",
-                                cursor: "pointer",
-                                background:
-                                  diceCount === n
-                                    ? "rgba(109,69,255,.2)"
-                                    : "var(--card2)",
-                                border:
-                                  diceCount === n
-                                    ? "1px solid var(--gold-d)"
-                                    : "1px solid var(--border)",
-                                color:
-                                  diceCount === n
-                                    ? "var(--gold-l)"
-                                    : "var(--text2)",
-                              }}
-                            >
-                              {n}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      <div className="label mb4">Dados</div>
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "repeat(4,1fr)",
-                          gap: 6,
-                          marginBottom: 12,
-                        }}
-                      >
-                        {DICE.map((d) => (
-                          <button
-                            key={d}
-                            className="dice-btn"
-                            style={{ width: "100%", height: 46 }}
-                            onClick={() => rollDice(d, diceCount)}
-                          >
-                            <i
-                              className="fi fi-rr-dice"
-                              style={{ fontSize: 15 }}
-                            ></i>
-                            <span style={{ fontSize: 10 }}>d{d}</span>
-                          </button>
-                        ))}
-                      </div>
-                      <div className="label mb4">Expressão personalizada</div>
-                      <div style={{ gap: 6, marginBottom: 10 }}>
-                        <input
-                          value={diceExpr}
-                          onChange={(e) => setDiceExpr(e.target.value)}
-                          placeholder="ex: 3d8+2"
-                          style={{
-                            flex: 1,
-                            fontSize: 13,
-                            padding: "7px 10px",
-                            color: "var(--text)",
-                            background: "var(--surface)",
-                            border: "1px solid var(--border2)",
-                            borderRadius: "var(--radius)",
-                          }}
-                          onKeyDown={(e) => e.key === "Enter" && rollExpr()}
-                        />
-                        <button
-                          className="btn-gold btn-sm"
-                          style={{ padding: "7px 12px" }}
-                          onClick={rollExpr}
-                        >
-                          <i className="fi fi-rr-dice-d20"></i>
-                        </button>
-                      </div>
-                      {diceExprResult && (
-                        <div
-                          style={{
-                            background: "var(--surface)",
-                            borderRadius: 8,
-                            padding: 10,
-                            textAlign: "center",
-                          }}
-                        >
-                          {typeof diceExprResult === "string" ? (
-                            <div style={{ color: "#e05070", fontSize: 12 }}>
-                              {diceExprResult}
-                            </div>
-                          ) : (
-                            <>
-                              <div
-                                style={{ color: "var(--text3)", fontSize: 11 }}
-                              >
-                                {diceExprResult.label}
-                              </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
                               <div
                                 style={{
                                   fontFamily: "Cinzel,serif",
-                                  fontSize: 28,
-                                  color: "var(--gold-l)",
+                                  fontSize: 12,
+                                  color:
+                                    i === currentTurn
+                                      ? "var(--gold-l)"
+                                      : "var(--text)",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
                                 }}
                               >
-                                {diceExprResult.total}
+                                {p.name}
                               </div>
                               <div
-                                style={{ color: "var(--text3)", fontSize: 10 }}
+                                style={{ fontSize: 10, color: "var(--text3)" }}
                               >
-                                [{diceExprResult.results.join("+")}]
-                                {diceExprResult.bonus
-                                  ? ` + ${diceExprResult.bonus}`
-                                  : ""}
+                                Init {p.roll}
                               </div>
-                            </>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
+                            </div>
+                            {i === currentTurn && (
+                              <span
+                                style={{ color: "var(--gold)", fontSize: 13 }}
+                              >
+                                ▶
+                              </span>
+                            )}
+                            {isMaster && (
+                              <button
+                                onClick={() => removeInit(p.id)}
+                                style={{
+                                  background: "transparent",
+                                  border: "none",
+                                  color: "var(--text3)",
+                                  cursor: "pointer",
+                                  fontSize: 14,
+                                  padding: 2,
+                                }}
+                              >
+                                <i className="fi fi-rr-cross-small"></i>
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
 
-                  {/* ── MAPA ── */}
-                  {sideMenuTab === "map" && isMaster && (
-                    <div>
-                      <div className="label mb8">Imagem de Fundo</div>
-                      <button
-                        onClick={() => mapBgInputRef.current.click()}
-                        disabled={uploadingMap}
-                        className="btn-outline"
-                        style={{
-                          width: "100%",
-                          marginBottom: 8,
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          gap: 8,
-                        }}
-                      >
-                        {uploadingMap ? (
-                          <>
-                            <i className="fi fi-rr-loading"></i> Carregando...
-                          </>
-                        ) : (
-                          <>
-                            <i className="fi fi-rr-picture"></i> Escolher do
-                            dispositivo
-                          </>
-                        )}
-                      </button>
-                      {mapBg && (
-                        <>
+                    {/* ── DADOS ── */}
+                    {sideMenuTab === "dice" && (
+                      <div>
+                        {diceResult && (
                           <div
                             style={{
-                              borderRadius: 8,
-                              overflow: "hidden",
-                              marginBottom: 8,
-                              border: "1px solid var(--border)",
+                              background: "var(--surface)",
+                              borderRadius: 10,
+                              padding: "12px",
+                              textAlign: "center",
+                              marginBottom: 12,
                             }}
                           >
-                            <img
-                              src={mapBg}
+                            <div
+                              style={{
+                                color: "var(--text3)",
+                                fontSize: 11,
+                                marginBottom: 2,
+                              }}
+                            >
+                              {diceResult.count}d{diceResult.sides}
+                            </div>
+                            <div
+                              style={{
+                                fontFamily: "Cinzel,serif",
+                                fontSize: 36,
+                                color: "var(--gold-l)",
+                              }}
+                            >
+                              {diceResult.total}
+                            </div>
+                            {diceResult.results.length > 1 && (
+                              <div
+                                style={{ color: "var(--text3)", fontSize: 11 }}
+                              >
+                                [{diceResult.results.join("+")}]
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        <div style={{ marginBottom: 10 }}>
+                          <div className="label mb4">Quantidade</div>
+                          <div style={{ display: "flex", gap: 4 }}>
+                            {[1, 2, 3, 4, 5, 6].map((n) => (
+                              <button
+                                key={n}
+                                onClick={() => setDiceCount(n)}
+                                style={{
+                                  flex: 1,
+                                  padding: "6px 2px",
+                                  borderRadius: 6,
+                                  fontSize: 12,
+                                  fontFamily: "Cinzel,serif",
+                                  cursor: "pointer",
+                                  background:
+                                    diceCount === n
+                                      ? "rgba(109,69,255,.2)"
+                                      : "var(--card2)",
+                                  border:
+                                    diceCount === n
+                                      ? "1px solid var(--gold-d)"
+                                      : "1px solid var(--border)",
+                                  color:
+                                    diceCount === n
+                                      ? "var(--gold-l)"
+                                      : "var(--text2)",
+                                }}
+                              >
+                                {n}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="label mb4">Dados</div>
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "repeat(4,1fr)",
+                            gap: 6,
+                            marginBottom: 12,
+                          }}
+                        >
+                          {DICE.map((d) => (
+                            <button
+                              key={d}
+                              className="dice-btn"
+                              style={{ width: "100%", height: 46 }}
+                              onClick={() => rollDice(d, diceCount)}
+                            >
+                              <i
+                                className="fi fi-rr-dice"
+                                style={{ fontSize: 15 }}
+                              ></i>
+                              <span style={{ fontSize: 10 }}>d{d}</span>
+                            </button>
+                          ))}
+                        </div>
+                        <div className="label mb4">Expressão personalizada</div>
+                        <div style={{ gap: 6, marginBottom: 10 }}>
+                          <input
+                            value={diceExpr}
+                            onChange={(e) => setDiceExpr(e.target.value)}
+                            placeholder="ex: 3d8+2"
+                            style={{
+                              flex: 1,
+                              fontSize: 13,
+                              padding: "7px 10px",
+                              color: "var(--text)",
+                              background: "var(--surface)",
+                              border: "1px solid var(--border2)",
+                              borderRadius: "var(--radius)",
+                            }}
+                            onKeyDown={(e) => e.key === "Enter" && rollExpr()}
+                          />
+                          <button
+                            className="btn-gold btn-sm"
+                            style={{ padding: "7px 12px" }}
+                            onClick={rollExpr}
+                          >
+                            <i className="fi fi-rr-dice-d20"></i>
+                          </button>
+                        </div>
+                        {diceExprResult && (
+                          <div
+                            style={{
+                              background: "var(--surface)",
+                              borderRadius: 8,
+                              padding: 10,
+                              textAlign: "center",
+                            }}
+                          >
+                            {typeof diceExprResult !== "string" && (
+                              <>
+                                <div
+                                  style={{
+                                    color: "var(--text3)",
+                                    fontSize: 11,
+                                  }}
+                                >
+                                  {diceExprResult.label}
+                                </div>
+                                <div
+                                  style={{
+                                    fontFamily: "Cinzel,serif",
+                                    fontSize: 28,
+                                    color: "var(--gold-l)",
+                                  }}
+                                >
+                                  {diceExprResult.total}
+                                </div>
+                                {diceExprResult.parts?.map((p, i) => (
+                                  <div
+                                    key={i}
+                                    style={{
+                                      color: "var(--text3)",
+                                      fontSize: 10,
+                                    }}
+                                  >
+                                    {p}
+                                  </div>
+                                ))}
+                                {diceExprResult.bonus !== 0 && (
+                                  <div
+                                    style={{
+                                      color: "var(--text3)",
+                                      fontSize: 10,
+                                    }}
+                                  >
+                                    Bônus:{" "}
+                                    {diceExprResult.bonus > 0
+                                      ? `+${diceExprResult.bonus}`
+                                      : diceExprResult.bonus}
+                                  </div>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* ── MAPA ── */}
+                    {sideMenuTab === "map" && isMaster && (
+                      <div>
+                        <div className="label mb8">Imagem de Fundo</div>
+                        <button
+                          onClick={() => mapBgInputRef.current.click()}
+                          disabled={uploadingMap}
+                          className="btn-outline"
+                          style={{
+                            width: "100%",
+                            marginBottom: 8,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: 8,
+                          }}
+                        >
+                          {uploadingMap ? (
+                            <>
+                              <i className="fi fi-rr-loading"></i> Carregando...
+                            </>
+                          ) : (
+                            <>
+                              <i className="fi fi-rr-picture"></i> Escolher do
+                              dispositivo
+                            </>
+                          )}
+                        </button>
+                        {mapBg && (
+                          <>
+                            <div
+                              style={{
+                                borderRadius: 8,
+                                overflow: "hidden",
+                                marginBottom: 8,
+                                border: "1px solid var(--border)",
+                              }}
+                            >
+                              <img
+                                src={mapBg}
+                                style={{
+                                  width: "100%",
+                                  height: 120,
+                                  objectFit: "cover",
+                                  display: "block",
+                                }}
+                                alt="mapa atual"
+                              />
+                            </div>
+                            <button
+                              onClick={clearMap}
+                              className="btn-danger"
                               style={{
                                 width: "100%",
-                                height: 120,
-                                objectFit: "cover",
-                                display: "block",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                gap: 6,
                               }}
-                              alt="mapa atual"
-                            />
-                          </div>
-                          <button
-                            onClick={clearMap}
-                            className="btn-danger"
-                            style={{
-                              width: "100%",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              gap: 6,
-                            }}
-                          >
-                            <i className="fi fi-rr-trash"></i> Remover mapa
-                          </button>
-                        </>
-                      )}
-                      {!mapBg && (
-                        <p style={{ color: "var(--text3)", fontSize: 13 }}>
-                          Nenhum mapa definido.
-                        </p>
-                      )}
-                      <input
-                        ref={mapBgInputRef}
-                        type="file"
-                        accept="image/*"
-                        style={{ display: "none" }}
-                        onChange={handleMapUpload}
-                      />
-                    </div>
-                  )}
-                  {sideMenuTab === "map" && !isMaster && (
-                    <p style={{ color: "var(--text3)", fontSize: 13 }}>
-                      Só o Mestre pode alterar o mapa.
-                    </p>
-                  )}
+                            >
+                              <i className="fi fi-rr-trash"></i> Remover mapa
+                            </button>
+                          </>
+                        )}
+                        {!mapBg && (
+                          <p style={{ color: "var(--text3)", fontSize: 13 }}>
+                            Nenhum mapa definido.
+                          </p>
+                        )}
+                        <input
+                          ref={mapBgInputRef}
+                          type="file"
+                          accept="image/*"
+                          style={{ display: "none" }}
+                          onChange={handleMapUpload}
+                        />
+                      </div>
+                    )}
+                    {sideMenuTab === "map" && !isMaster && (
+                      <p style={{ color: "var(--text3)", fontSize: 13 }}>
+                        Só o Mestre pode alterar o mapa.
+                      </p>
+                    )}
+                  </div>
                 </div>
-              </div>
-            </>
-          )}
+              </>
+            )}
+          </div>
         </div>
       )}
 
@@ -3980,20 +4102,22 @@ function CombatArena({ user, room, setView }) {
                     </div>
                   </div>
                   {/* HP atual — só o número, compacto */}
-                  <div
-                    style={{
-                      fontFamily: "Cinzel,serif",
-                      fontSize: 13,
-                      color: dead ? "#666" : "var(--text)",
-                      flexShrink: 0,
-                      marginLeft: 8,
-                    }}
-                  >
-                    {t.hp}
-                    <span style={{ color: "var(--text3)", fontSize: 11 }}>
-                      /{t.maxHp}
-                    </span>
-                  </div>
+                  {(!t.isEnemy || isMaster) && (
+                    <div
+                      style={{
+                        fontFamily: "Cinzel,serif",
+                        fontSize: 13,
+                        color: dead ? "#666" : "var(--text)",
+                        flexShrink: 0,
+                        marginLeft: 8,
+                      }}
+                    >
+                      {t.hp}
+                      <span style={{ color: "var(--text3)", fontSize: 11 }}>
+                        /{t.maxHp}
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 {/* ── Barra de HP ── */}
@@ -4079,6 +4203,36 @@ function CombatArena({ user, room, setView }) {
                       </button>
                     </div>
                     <BulkHpInput token={t} onApply={changeTokenHp} />
+                    {isMaster && (
+                      <button
+                        className="btn-outline btn-sm mt8"
+                        style={{ width: "100%", fontSize: 11 }}
+                        onClick={async () => {
+                          // Busca a ficha original no Firestore pelo nome e sistema
+                          const coll = t.isEnemy ? "enemies" : "characters";
+                          const q = query(
+                            collection(db, coll),
+                            where("system", "==", room.system),
+                            orderBy("createdAt", "desc"),
+                          );
+                          const snap = await getDocs(q);
+                          const found = snap.docs
+                            .map((d) => ({ firestoreId: d.id, ...d.data() }))
+                            .find((f) => f.name === t.name);
+                          if (found)
+                            setViewingSheet({
+                              type: t.isEnemy ? "enemy" : "char",
+                              data: found,
+                            });
+                        }}
+                      >
+                        <i
+                          className="fi fi-rr-scroll"
+                          style={{ marginRight: 4 }}
+                        ></i>
+                        Ver Ficha
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -4554,6 +4708,110 @@ function CombatArena({ user, room, setView }) {
                 ? `Adicionar ${initForm.name}`
                 : "Seleciona um token primeiro"}
             </button>
+          </div>
+        </div>
+      )}
+
+      {viewingSheet && (
+        <div className="modal-overlay" onClick={() => setViewingSheet(null)}>
+          <div
+            className="modal-sheet"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxHeight: "90vh" }}
+          >
+            <div className="modal-handle" />
+            <div className="flex-between mb16">
+              <h3 style={{ fontSize: 16 }}>{viewingSheet.data.name}</h3>
+              <button
+                className="btn-icon"
+                onClick={() => setViewingSheet(null)}
+              >
+                <i className="fi fi-rr-cross-small"></i>
+              </button>
+            </div>
+            {/* Atributos */}
+            {viewingSheet.data.stats && (
+              <div className="mb12">
+                <div className="label mb8">Atributos</div>
+                <div className="grid3">
+                  {Object.entries(viewingSheet.data.stats).map(([k, v]) => (
+                    <div key={k} className="stat-box">
+                      <div className="stat-name">{k}</div>
+                      <div
+                        style={{
+                          fontFamily: "Cinzel,serif",
+                          color: "var(--gold-l)",
+                          fontSize: 18,
+                        }}
+                      >
+                        {v}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {/* HP e CA */}
+            <div className="grid3 mb12">
+              <div className="card2" style={{ textAlign: "center" }}>
+                <div className="label">HP</div>
+                <div
+                  style={{ fontFamily: "Cinzel,serif", color: "var(--gold)" }}
+                >
+                  {viewingSheet.data.hp}/{viewingSheet.data.maxHp}
+                </div>
+              </div>
+              {viewingSheet.data.ac && (
+                <div className="card2" style={{ textAlign: "center" }}>
+                  <div className="label">CA</div>
+                  <div
+                    style={{ fontFamily: "Cinzel,serif", color: "var(--gold)" }}
+                  >
+                    {viewingSheet.data.ac}
+                  </div>
+                </div>
+              )}
+            </div>
+            {/* Campos do sistema */}
+            {viewingSheet.data.fields &&
+              Object.entries(viewingSheet.data.fields)
+                .filter(([, v]) => v)
+                .map(([k, v]) => (
+                  <div key={k} className="mb8">
+                    <div className="label">{k}</div>
+                    <div style={{ color: "var(--text)" }}>{v}</div>
+                  </div>
+                ))}
+            {/* Ataques (inimigos) */}
+            {viewingSheet.data.attacks && (
+              <div className="mb8">
+                <div className="label">Ataques</div>
+                <div
+                  style={{
+                    color: "var(--text)",
+                    whiteSpace: "pre-wrap",
+                    fontSize: 14,
+                  }}
+                >
+                  {viewingSheet.data.attacks}
+                </div>
+              </div>
+            )}
+            {/* Notas */}
+            {viewingSheet.data.notes && (
+              <div>
+                <div className="label">Notas</div>
+                <div
+                  style={{
+                    color: "var(--text2)",
+                    fontSize: 14,
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
+                  {viewingSheet.data.notes}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
