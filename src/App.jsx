@@ -162,6 +162,12 @@ select option{background:var(--card)}
 .error-msg{background:rgba(155,35,53,.15);border:1px solid rgba(155,35,53,.4);border-radius:var(--radius);padding:10px 14px;color:#e05070;font-size:13px;margin-bottom:12px}
 .live-dot{width:8px;height:8px;border-radius:50%;background:#27ae60;animation:pulse 1.5s ease-in-out infinite;display:inline-block}
 @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.6;transform:scale(.85)}}
+@keyframes fadeInOut{
+  0%{opacity:0;transform:translateX(-50%) translateY(-8px)}
+  15%{opacity:1;transform:translateX(-50%) translateY(0)}
+  75%{opacity:1;transform:translateX(-50%) translateY(0)}
+  100%{opacity:0;transform:translateX(-50%) translateY(-8px)}
+}
 `;
 document.head.appendChild(styleEl);
 
@@ -2735,6 +2741,16 @@ function CombatArena({ user, room, setView }) {
   const MAX_ZOOM = 1.5;
   const ZOOM_STEP = 0.15;
 
+  const [showTurnBanner, setShowTurnBanner] = useState(false);
+
+  // Mostrar turno atual no centro da tela a cada mudança, por 2 segundos
+  useEffect(() => {
+    if (!initiative.length) return;
+    setShowTurnBanner(true);
+    const timer = setTimeout(() => setShowTurnBanner(false), 3000);
+    return () => clearTimeout(timer);
+  }, [currentTurn, initiative]);
+
   // ── 1) Listener RTDB ──────────────────────────────────────
   useEffect(() => {
     const unsub = listenCombat(roomId, (data) => {
@@ -2808,16 +2824,16 @@ function CombatArena({ user, room, setView }) {
     return token.ownerId === user.uid; // player: só o próprio
   };
 
-const getCanvasPos = (e) => {
-  if (!mapRef.current) return { x: MAP_W / 2, y: MAP_H / 2 };
-  const rect = mapRef.current.getBoundingClientRect();
-  const cx = e.touches ? e.touches[0].clientX : e.clientX;
-  const cy = e.touches ? e.touches[0].clientY : e.clientY;
-  return {
-    x: Math.max(22, Math.min(MAP_W - 22, (cx - rect.left) / zoom)),
-    y: Math.max(22, Math.min(MAP_H - 22, (cy - rect.top) / zoom)),
+  const getCanvasPos = (e) => {
+    if (!mapRef.current) return { x: MAP_W / 2, y: MAP_H / 2 };
+    const rect = mapRef.current.getBoundingClientRect();
+    const cx = e.touches ? e.touches[0].clientX : e.clientX;
+    const cy = e.touches ? e.touches[0].clientY : e.clientY;
+    return {
+      x: Math.max(22, Math.min(MAP_W - 22, (cx - rect.left) / zoom)),
+      y: Math.max(22, Math.min(MAP_H - 22, (cy - rect.top) / zoom)),
+    };
   };
-};
 
   const onTokenPointerDown = (e, tokenId) => {
     const tok = tokens[tokenId];
@@ -3342,53 +3358,77 @@ const getCanvasPos = (e) => {
               </div>
             </div>
             {/* Botões de zoom */}
-<div style={{
-  position:"fixed",
-  bottom:90,
-  left:10,
-  zIndex:55,
-  display:"flex",
-  flexDirection:"column",
-  gap:6,
-}}>
-  <button
-    onClick={() => setZoom(z => Math.min(MAX_ZOOM, parseFloat((z + ZOOM_STEP).toFixed(2))))}
-    style={{
-      width:40, height:40, borderRadius:10,
-      background:"rgba(13,18,32,.95)",
-      border:"1px solid var(--border2)",
-      color:"var(--gold)",
-      fontSize:22, fontWeight:600,
-      cursor:"pointer",
-      display:"flex", alignItems:"center", justifyContent:"center",
-      boxShadow:"0 2px 8px rgba(0,0,0,.4)",
-    }}>
-    +
-  </button>
-  <button
-    onClick={() => setZoom(z => Math.max(MIN_ZOOM, parseFloat((z - ZOOM_STEP).toFixed(2))))}
-    style={{
-      width:40, height:40, borderRadius:10,
-      background:"rgba(13,18,32,.95)",
-      border:"1px solid var(--border2)",
-      color:"var(--gold)",
-      fontSize:22, fontWeight:600,
-      cursor:"pointer",
-      display:"flex", alignItems:"center", justifyContent:"center",
-      boxShadow:"0 2px 8px rgba(0,0,0,.4)",
-    }}>
-    −
-  </button>
-  {/* Indicador de zoom atual */}
-  <div style={{
-    textAlign:"center",
-    fontSize:9,
-    color:"var(--text3)",
-    fontFamily:"Cinzel,serif",
-  }}>
-    {Math.round(zoom * 100)}%
-  </div>
-</div>
+            <div
+              style={{
+                position: "fixed",
+                bottom: 90,
+                left: 10,
+                zIndex: 55,
+                display: "flex",
+                flexDirection: "column",
+                gap: 6,
+              }}
+            >
+              <button
+                onClick={() =>
+                  setZoom((z) =>
+                    Math.min(MAX_ZOOM, parseFloat((z + ZOOM_STEP).toFixed(2))),
+                  )
+                }
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 10,
+                  background: "rgba(13,18,32,.95)",
+                  border: "1px solid var(--border2)",
+                  color: "var(--gold)",
+                  fontSize: 22,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  boxShadow: "0 2px 8px rgba(0,0,0,.4)",
+                }}
+              >
+                +
+              </button>
+              <button
+                onClick={() =>
+                  setZoom((z) =>
+                    Math.max(MIN_ZOOM, parseFloat((z - ZOOM_STEP).toFixed(2))),
+                  )
+                }
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 10,
+                  background: "rgba(13,18,32,.95)",
+                  border: "1px solid var(--border2)",
+                  color: "var(--gold)",
+                  fontSize: 22,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  boxShadow: "0 2px 8px rgba(0,0,0,.4)",
+                }}
+              >
+                −
+              </button>
+              {/* Indicador de zoom atual */}
+              <div
+                style={{
+                  textAlign: "center",
+                  fontSize: 9,
+                  color: "var(--text3)",
+                  fontFamily: "Cinzel,serif",
+                }}
+              >
+                {Math.round(zoom * 100)}%
+              </div>
+            </div>
             {/* ── FAB: abre menu lateral ──────────────────────── */}
             <button
               onClick={() => setShowSideMenu((v) => !v)}
@@ -3949,6 +3989,92 @@ const getCanvasPos = (e) => {
               </>
             )}
           </div>
+          {/* ── Banner de turno ── */}
+          {showTurnBanner && initiative[currentTurn] && (
+            <div
+              style={{
+                position: "fixed",
+                top: 120,
+                left: "50%",
+                transform: "translateX(-50%)",
+                zIndex: 58,
+                background: "rgba(13,18,32,.97)",
+                border: `1px solid ${initiative[currentTurn].isEnemy ? "#c0392b" : "var(--gold-d)"}`,
+                borderRadius: 12,
+                padding: "10px 15px",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                boxShadow: "0 4px 24px rgba(0,0,0,.6)",
+                animation: "fadeInOut 3s ease forwards",
+                pointerEvents: "none",
+              }}
+            >
+              <div
+                style={{
+                  width: 34,
+                  height: 34,
+                  borderRadius: "50%",
+                  overflow: "hidden",
+                  flexShrink: 0,
+                  border: `2px solid ${initiative[currentTurn].isEnemy ? "#c0392b" : "var(--gold)"}`,
+                  background: initiative[currentTurn].isEnemy
+                    ? "rgba(155,35,53,.8)"
+                    : "rgba(26,58,110,.8)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 16,
+                }}
+              >
+                {initiative[currentTurn].avatarUrl ? (
+                  <img
+                    src={initiative[currentTurn].avatarUrl}
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                    }}
+                    alt=""
+                  />
+                ) : initiative[currentTurn].avatar?.startsWith("fi ") ? (
+                  <i className={initiative[currentTurn].avatar}></i>
+                ) : (
+                  <i className="fi fi-rr-sword"></i>
+                )}
+              </div>
+              <div>
+                <div
+                  style={{
+                    fontFamily: "Cinzel,serif",
+                    fontSize: 10,
+                    color: "var(--gold-l)",
+                  }}
+                >
+                  Turno de
+                </div>
+                <div
+                  style={{
+                    fontFamily: "Cinzel,serif",
+                    fontSize: 12,
+                    color: "var(--text)",
+                  }}
+                >
+                  {initiative[currentTurn].name}
+                </div>
+              </div>
+              <div
+                style={{
+                  fontFamily: "Cinzel,serif",
+                  fontSize: 9,
+                  color: "var(--text3)",
+                  marginLeft: 4,
+                }}
+              >
+                Round {round}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -3972,272 +4098,483 @@ const getCanvasPos = (e) => {
               Nenhum token. O Mestre adiciona a partir das fichas.
             </p>
           )}
-          {tokenArr.map((t) => {
-            const dead = isDead(t);
-            const pct = Math.max(
-              0,
-              Math.min(
-                100,
-                (parseInt(t.hp || 0) / parseInt(t.maxHp || 1)) * 100,
-              ),
-            );
-            return (
+          {/* ── ALIADOS ── */}
+          {tokenArr.filter((t) => !t.isEnemy).length > 0 && (
+            <div className="mb16">
               <div
-                key={t.id}
-                className="card mb8"
                 style={{
-                  borderColor: dead
-                    ? "#333"
-                    : t.isBoss
-                      ? "rgba(192,57,43,.4)"
-                      : "var(--border)",
-                  opacity: dead ? 0.75 : 1,
-                  filter: dead ? "grayscale(.7)" : "none",
-                  transition: "opacity .3s,filter .3s",
+                  fontFamily: "Cinzel,serif",
+                  fontSize: 11,
+                  color: "#7aadff",
+                  letterSpacing: ".1em",
+                  marginBottom: 10,
+                  paddingBottom: 6,
+                  borderBottom: "1px solid var(--border)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
                 }}
               >
-                {/* ── Linha 1: avatar + nome + HP ── */}
-                <div className="flex-between mb6">
-                  <div className="flex gap8" style={{ flex: 1, minWidth: 0 }}>
+                <i className="fi fi-rr-shield"></i>
+                ALIADOS · {tokenArr.filter((t) => !t.isEnemy).length}
+              </div>
+              {tokenArr
+                .filter((t) => !t.isEnemy)
+                .map((t) => {
+                  const dead = isDead(t);
+                  const pct = Math.max(
+                    0,
+                    Math.min(
+                      100,
+                      (parseInt(t.hp || 0) / parseInt(t.maxHp || 1)) * 100,
+                    ),
+                  );
+                  return (
                     <div
+                      key={t.id}
+                      className="card mb8"
                       style={{
-                        width: 42,
-                        height: 42,
-                        borderRadius: "50%",
-                        overflow: "hidden",
-                        border: `2px solid ${dead ? "#444" : t.isBoss ? "#c0392b" : t.isEnemy ? "#7a2a2a" : "var(--border2)"}`,
-                        background: "var(--surface)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontSize: 22,
-                        flexShrink: 0,
-                        boxShadow:
-                          !dead && t.isBoss
-                            ? "0 0 8px rgba(192,57,43,.4)"
-                            : "none",
+                        borderColor: dead
+                          ? "#333"
+                          : t.isBoss
+                            ? "rgba(192,57,43,.4)"
+                            : "var(--border)",
+                        opacity: dead ? 0.75 : 1,
+                        filter: dead ? "grayscale(.7)" : "none",
+                        transition: "opacity .3s,filter .3s",
                       }}
                     >
-                      <TokenFace t={t} size={42} />
-                    </div>
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div
-                        style={{
-                          fontSize: 14,
-                          fontFamily: "Cinzel,serif",
-                          color: dead
-                            ? "#666"
-                            : t.isBoss
-                              ? "#e05070"
-                              : "var(--text)",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {dead ? (
-                          <>
-                            <i
-                              className="fi fi-rr-skull"
-                              style={{ marginRight: 3 }}
-                            ></i>
-                          </>
-                        ) : t.isBoss ? (
-                          <>
-                            <i
-                              className="fi fi-rr-crown"
-                              style={{ marginRight: 3 }}
-                            ></i>
-                          </>
-                        ) : (
-                          ""
-                        )}
-                        {t.name}
-                      </div>
-                      <div
-                        className="flex gap4"
-                        style={{ marginTop: 2, flexWrap: "wrap" }}
-                      >
-                        {dead ? (
-                          <span
-                            className="badge"
+                      <div className="flex-between mb6">
+                        <div
+                          className="flex gap8"
+                          style={{ flex: 1, minWidth: 0 }}
+                        >
+                          <div
                             style={{
-                              fontSize: 10,
-                              background: "rgba(60,60,60,.5)",
-                              color: "#666",
-                              border: "1px solid #333",
+                              width: 42,
+                              height: 42,
+                              borderRadius: "50%",
+                              overflow: "hidden",
+                              border: `2px solid ${dead ? "#444" : t.isEnemy ? "#7a2a2a" : "var(--border2)"}`,
+                              background: "var(--surface)",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontSize: 22,
+                              flexShrink: 0,
                             }}
                           >
-                            Morto
+                            <TokenFace t={t} size={42} />
+                          </div>
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div
+                              style={{
+                                fontSize: 14,
+                                fontFamily: "Cinzel,serif",
+                                color: dead ? "#666" : "var(--text)",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {dead && (
+                                <i
+                                  className="fi fi-rr-skull"
+                                  style={{ marginRight: 3 }}
+                                ></i>
+                              )}
+                              {t.name}
+                            </div>
+                            <div
+                              className="flex gap4"
+                              style={{ marginTop: 2, flexWrap: "wrap" }}
+                            >
+                              {dead ? (
+                                <span
+                                  className="badge"
+                                  style={{
+                                    fontSize: 10,
+                                    background: "rgba(60,60,60,.5)",
+                                    color: "#666",
+                                    border: "1px solid #333",
+                                  }}
+                                >
+                                  Morto
+                                </span>
+                              ) : (
+                                <span
+                                  className="badge badge-blue"
+                                  style={{ fontSize: 10 }}
+                                >
+                                  Aliado
+                                </span>
+                              )}
+                              {t.ownerId === user.uid && !isMaster && !dead && (
+                                <span
+                                  className="badge badge-gold"
+                                  style={{ fontSize: 10 }}
+                                >
+                                  Teu
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <div
+                          style={{
+                            fontFamily: "Cinzel,serif",
+                            fontSize: 13,
+                            color: dead ? "#666" : "var(--text)",
+                            flexShrink: 0,
+                            marginLeft: 8,
+                          }}
+                        >
+                          {t.hp}
+                          <span style={{ color: "var(--text3)", fontSize: 11 }}>
+                            /{t.maxHp}
                           </span>
-                        ) : (
-                          <span
-                            className={`badge ${t.isEnemy ? "badge-red" : "badge-blue"}`}
-                            style={{ fontSize: 10 }}
-                          >
-                            {t.isEnemy ? "Inimigo" : "Aliado"}
-                          </span>
-                        )}
-                        {t.isBoss && !dead && (
-                          <span
-                            className="badge badge-red"
-                            style={{ fontSize: 10 }}
-                          >
-                            <i
-                              className="fi fi-rr-crown"
-                              style={{ marginRight: 3 }}
-                            ></i>
-                            Boss
-                          </span>
-                        )}
-                        {t.ownerId === user.uid && !isMaster && !dead && (
-                          <span
-                            className="badge badge-gold"
-                            style={{ fontSize: 10 }}
-                          >
-                            Teu
-                          </span>
-                        )}
+                        </div>
                       </div>
+                      <div className="hp-bar mb8">
+                        <div
+                          className="hp-fill"
+                          style={{ width: pct + "%", transition: "width .3s" }}
+                        />
+                      </div>
+                      {isMaster && (
+                        <div
+                          style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 6,
+                          }}
+                        >
+                          <div style={{ display: "flex", gap: 4 }}>
+                            <button
+                              className="btn-icon btn-sm"
+                              style={{
+                                flex: 1,
+                                fontSize: 11,
+                                color: "var(--green-l)",
+                                height: 28,
+                              }}
+                              onClick={() => changeTokenHp(t, 1)}
+                            >
+                              +1
+                            </button>
+                            <button
+                              className="btn-icon btn-sm"
+                              style={{
+                                flex: 1,
+                                fontSize: 11,
+                                color: "var(--green-l)",
+                                height: 28,
+                              }}
+                              onClick={() => changeTokenHp(t, 5)}
+                            >
+                              +5
+                            </button>
+                            <button
+                              className="btn-icon btn-sm"
+                              style={{
+                                flex: 1,
+                                fontSize: 11,
+                                color: "var(--red-l)",
+                                height: 28,
+                              }}
+                              onClick={() => changeTokenHp(t, -1)}
+                            >
+                              -1
+                            </button>
+                            <button
+                              className="btn-icon btn-sm"
+                              style={{
+                                flex: 1,
+                                fontSize: 11,
+                                color: "var(--red-l)",
+                                height: 28,
+                              }}
+                              onClick={() => changeTokenHp(t, -5)}
+                            >
+                              -5
+                            </button>
+                            <button
+                              className="btn-icon btn-sm"
+                              style={{
+                                fontSize: 11,
+                                height: 28,
+                                color: "var(--text3)",
+                              }}
+                              onClick={() => removeToken(t.id, t.name)}
+                            >
+                              <i className="fi fi-rr-trash"></i>
+                            </button>
+                          </div>
+                          <BulkHpInput token={t} onApply={changeTokenHp} />
+                        </div>
+                      )}
                     </div>
-                  </div>
-                  {/* HP atual — só o número, compacto */}
-                  {(!t.isEnemy || isMaster) && (
+                  );
+                })}
+            </div>
+          )}
+
+          {/* ── INIMIGOS ── */}
+          {tokenArr.filter((t) => t.isEnemy).length > 0 && (
+            <div>
+              <div
+                style={{
+                  fontFamily: "Cinzel,serif",
+                  fontSize: 11,
+                  color: "#e05070",
+                  letterSpacing: ".1em",
+                  marginBottom: 10,
+                  paddingBottom: 6,
+                  borderBottom: "1px solid var(--border)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+              >
+                <i className="fi fi-rr-skull"></i>
+                INIMIGOS · {tokenArr.filter((t) => t.isEnemy).length}
+              </div>
+              {tokenArr
+                .filter((t) => t.isEnemy)
+                .map((t) => {
+                  const dead = isDead(t);
+                  const pct = Math.max(
+                    0,
+                    Math.min(
+                      100,
+                      (parseInt(t.hp || 0) / parseInt(t.maxHp || 1)) * 100,
+                    ),
+                  );
+                  return (
                     <div
+                      key={t.id}
+                      className="card mb8"
                       style={{
-                        fontFamily: "Cinzel,serif",
-                        fontSize: 13,
-                        color: dead ? "#666" : "var(--text)",
-                        flexShrink: 0,
-                        marginLeft: 8,
+                        borderColor: dead
+                          ? "#333"
+                          : t.isBoss
+                            ? "rgba(192,57,43,.4)"
+                            : "var(--border)",
+                        opacity: dead ? 0.75 : 1,
+                        filter: dead ? "grayscale(.7)" : "none",
+                        transition: "opacity .3s,filter .3s",
                       }}
                     >
-                      {t.hp}
-                      <span style={{ color: "var(--text3)", fontSize: 11 }}>
-                        /{t.maxHp}
-                      </span>
+                      <div className="flex-between mb6">
+                        <div
+                          className="flex gap8"
+                          style={{ flex: 1, minWidth: 0 }}
+                        >
+                          <div
+                            style={{
+                              width: 42,
+                              height: 42,
+                              borderRadius: "50%",
+                              overflow: "hidden",
+                              border: `2px solid ${dead ? "#444" : t.isBoss ? "#c0392b" : "#7a2a2a"}`,
+                              background: "var(--surface)",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontSize: 22,
+                              flexShrink: 0,
+                              boxShadow:
+                                !dead && t.isBoss
+                                  ? "0 0 8px rgba(192,57,43,.4)"
+                                  : "none",
+                            }}
+                          >
+                            <TokenFace t={t} size={42} />
+                          </div>
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div
+                              style={{
+                                fontSize: 14,
+                                fontFamily: "Cinzel,serif",
+                                color: dead
+                                  ? "#666"
+                                  : t.isBoss
+                                    ? "#e05070"
+                                    : "var(--text)",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {dead && (
+                                <i
+                                  className="fi fi-rr-skull"
+                                  style={{ marginRight: 3 }}
+                                ></i>
+                              )}
+                              {t.isBoss && !dead && (
+                                <i
+                                  className="fi fi-rr-crown"
+                                  style={{ marginRight: 3 }}
+                                ></i>
+                              )}
+                              {t.name}
+                            </div>
+                            <div
+                              className="flex gap4"
+                              style={{ marginTop: 2, flexWrap: "wrap" }}
+                            >
+                              {dead ? (
+                                <span
+                                  className="badge"
+                                  style={{
+                                    fontSize: 10,
+                                    background: "rgba(60,60,60,.5)",
+                                    color: "#666",
+                                    border: "1px solid #333",
+                                  }}
+                                >
+                                  Morto
+                                </span>
+                              ) : (
+                                <span
+                                  className="badge badge-red"
+                                  style={{ fontSize: 10 }}
+                                >
+                                  Inimigo
+                                </span>
+                              )}
+                              {t.isBoss && !dead && (
+                                <span
+                                  className="badge badge-red"
+                                  style={{ fontSize: 10 }}
+                                >
+                                  <i
+                                    className="fi fi-rr-crown"
+                                    style={{ marginRight: 3 }}
+                                  ></i>
+                                  Boss
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        {/* HP só visível para o mestre em inimigos */}
+                        {isMaster && (
+                          <div
+                            style={{
+                              fontFamily: "Cinzel,serif",
+                              fontSize: 13,
+                              color: dead ? "#666" : "var(--text)",
+                              flexShrink: 0,
+                              marginLeft: 8,
+                            }}
+                          >
+                            {t.hp}
+                            <span
+                              style={{ color: "var(--text3)", fontSize: 11 }}
+                            >
+                              /{t.maxHp}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      {/* Barra de HP só para o mestre */}
+                      {isMaster ? (
+                        <div className="hp-bar mb8">
+                          <div
+                            className="hp-fill"
+                            style={{
+                              width: pct + "%",
+                              background: dead
+                                ? "#333"
+                                : t.isBoss
+                                  ? "linear-gradient(90deg,#8b0000,#e05070)"
+                                  : "",
+                              transition: "width .3s",
+                            }}
+                          />
+                        </div>
+                      ) : (
+                        <div style={{ height: 6, marginBottom: 8 }} />
+                      )}
+                      {isMaster && (
+                        <div
+                          style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 6,
+                          }}
+                        >
+                          <div style={{ display: "flex", gap: 4 }}>
+                            <button
+                              className="btn-icon btn-sm"
+                              style={{
+                                flex: 1,
+                                fontSize: 11,
+                                color: "var(--green-l)",
+                                height: 28,
+                              }}
+                              onClick={() => changeTokenHp(t, 1)}
+                            >
+                              +1
+                            </button>
+                            <button
+                              className="btn-icon btn-sm"
+                              style={{
+                                flex: 1,
+                                fontSize: 11,
+                                color: "var(--green-l)",
+                                height: 28,
+                              }}
+                              onClick={() => changeTokenHp(t, 5)}
+                            >
+                              +5
+                            </button>
+                            <button
+                              className="btn-icon btn-sm"
+                              style={{
+                                flex: 1,
+                                fontSize: 11,
+                                color: "var(--red-l)",
+                                height: 28,
+                              }}
+                              onClick={() => changeTokenHp(t, -1)}
+                            >
+                              -1
+                            </button>
+                            <button
+                              className="btn-icon btn-sm"
+                              style={{
+                                flex: 1,
+                                fontSize: 11,
+                                color: "var(--red-l)",
+                                height: 28,
+                              }}
+                              onClick={() => changeTokenHp(t, -5)}
+                            >
+                              -5
+                            </button>
+                            <button
+                              className="btn-icon btn-sm"
+                              style={{
+                                fontSize: 11,
+                                height: 28,
+                                color: "var(--text3)",
+                              }}
+                              onClick={() => removeToken(t.id, t.name)}
+                            >
+                              <i className="fi fi-rr-trash"></i>
+                            </button>
+                          </div>
+                          <BulkHpInput token={t} onApply={changeTokenHp} />
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-
-                {/* ── Barra de HP ── */}
-                <div className="hp-bar mb8">
-                  <div
-                    className="hp-fill"
-                    style={{
-                      width: pct + "%",
-                      background: dead
-                        ? "#333"
-                        : t.isBoss
-                          ? "linear-gradient(90deg,#8b0000,#e05070)"
-                          : "",
-                      transition: "width .3s",
-                    }}
-                  />
-                </div>
-
-                {/* ── Linha 2: controles de HP (só mestre) ── */}
-                {isMaster && (
-                  <div
-                    style={{ display: "flex", flexDirection: "column", gap: 6 }}
-                  >
-                    <div style={{ display: "flex", gap: 4 }}>
-                      <button
-                        className="btn-icon btn-sm"
-                        style={{
-                          flex: 1,
-                          fontSize: 11,
-                          color: "var(--green-l)",
-                          height: 28,
-                        }}
-                        onClick={() => changeTokenHp(t, 1)}
-                      >
-                        +1
-                      </button>
-                      <button
-                        className="btn-icon btn-sm"
-                        style={{
-                          flex: 1,
-                          fontSize: 11,
-                          color: "var(--green-l)",
-                          height: 28,
-                        }}
-                        onClick={() => changeTokenHp(t, 5)}
-                      >
-                        +5
-                      </button>
-                      <button
-                        className="btn-icon btn-sm"
-                        style={{
-                          flex: 1,
-                          fontSize: 11,
-                          color: "var(--red-l)",
-                          height: 28,
-                        }}
-                        onClick={() => changeTokenHp(t, -1)}
-                      >
-                        -1
-                      </button>
-                      <button
-                        className="btn-icon btn-sm"
-                        style={{
-                          flex: 1,
-                          fontSize: 11,
-                          color: "var(--red-l)",
-                          height: 28,
-                        }}
-                        onClick={() => changeTokenHp(t, -5)}
-                      >
-                        -5
-                      </button>
-                      <button
-                        className="btn-icon btn-sm"
-                        style={{
-                          fontSize: 11,
-                          height: 28,
-                          color: "var(--text3)",
-                        }}
-                        onClick={() => removeToken(t.id, t.name)}
-                      >
-                        <i className="fi fi-rr-trash"></i>
-                      </button>
-                    </div>
-                    <BulkHpInput token={t} onApply={changeTokenHp} />
-                    {isMaster && (
-                      <button
-                        className="btn-outline btn-sm mt8"
-                        style={{ width: "100%", fontSize: 11 }}
-                        onClick={async () => {
-                          // Busca a ficha original no Firestore pelo nome e sistema
-                          const coll = t.isEnemy ? "enemies" : "characters";
-                          const q = query(
-                            collection(db, coll),
-                            where("system", "==", room.system),
-                            orderBy("createdAt", "desc"),
-                          );
-                          const snap = await getDocs(q);
-                          const found = snap.docs
-                            .map((d) => ({ firestoreId: d.id, ...d.data() }))
-                            .find((f) => f.name === t.name);
-                          if (found)
-                            setViewingSheet({
-                              type: t.isEnemy ? "enemy" : "char",
-                              data: found,
-                            });
-                        }}
-                      >
-                        <i
-                          className="fi fi-rr-scroll"
-                          style={{ marginRight: 4 }}
-                        ></i>
-                        Ver Ficha
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+                  );
+                })}
+            </div>
+          )}
         </div>
       )}
 
