@@ -2737,6 +2737,7 @@ function CombatArena({ user, room, setView }) {
   const [viewingSheet, setViewingSheet] = useState(null); // { type:"char"|"enemy", data:obj }
 
   const [zoom, setZoom] = useState(0.65);
+  const zoomRef = useRef(0.65);
   const MIN_ZOOM = 0.4;
   const MAX_ZOOM = 1.5;
   const ZOOM_STEP = 0.15;
@@ -2809,6 +2810,14 @@ function CombatArena({ user, room, setView }) {
     [rtdbPath, user.name],
   );
 
+  const setZoomSynced = (fn) => {
+  setZoom(prev => {
+    const next = typeof fn === "function" ? fn(prev) : fn;
+    zoomRef.current = next;
+    return next;
+  });
+};
+
   const rtdbUpdate = useCallback(async (path, data) => {
     await update(ref(rtdb, path), data);
   }, []);
@@ -2824,55 +2833,60 @@ function CombatArena({ user, room, setView }) {
     return token.ownerId === user.uid; // player: só o próprio
   };
 
-  const getCanvasPos = (e) => {
-    if (!mapRef.current) return { x: MAP_W / 2, y: MAP_H / 2 };
-    const rect = mapRef.current.getBoundingClientRect();
-    const cx = e.touches ? e.touches[0].clientX : e.clientX;
-    const cy = e.touches ? e.touches[0].clientY : e.clientY;
-    return {
-      x: Math.max(22, Math.min(MAP_W - 22, (cx - rect.left) / zoom)),
-      y: Math.max(22, Math.min(MAP_H - 22, (cy - rect.top) / zoom)),
-    };
+const getCanvasPos = (e) => {
+  if (!scrollRef.current) return { x: MAP_W / 2, y: MAP_H / 2 };
+  const rect = scrollRef.current.getBoundingClientRect();
+  const cx = e.touches ? e.touches[0].clientX : e.clientX;
+  const cy = e.touches ? e.touches[0].clientY : e.clientY;
+  const rawX = cx - rect.left + scrollRef.current.scrollLeft;
+  const rawY = cy - rect.top + scrollRef.current.scrollTop;
+  return {
+    x: Math.max(22, Math.min(MAP_W - 22, rawX / zoomRef.current)),
+    y: Math.max(22, Math.min(MAP_H - 22, rawY / zoomRef.current)),
   };
+};
 
-  const onTokenPointerDown = (e, tokenId) => {
-    const tok = tokens[tokenId];
-    if (!tok || !canDrag(tok)) return;
-    e.stopPropagation();
-    dragging.current = tokenId;
-    document.addEventListener("mousemove", onPointerMove, { passive: false });
-    mapRef.current.addEventListener("touchmove", onPointerMove, {
-      passive: false,
-    });
-    document.addEventListener("mouseup", onPointerUp);
-    document.addEventListener("touchend", onPointerUp);
+const onTokenPointerDown = (e, tokenId) => {
+  const tok = tokens[tokenId];
+  if (!tok || !canDrag(tok)) return;
+  e.stopPropagation();
+  const pos = getCanvasPos(e);
+  dragging.current = {
+    id: tokenId,
+    offsetX: pos.x - (tok.x || MAP_W / 2),
+    offsetY: pos.y - (tok.y || MAP_H / 2),
   };
+  document.addEventListener("mousemove", onPointerMove, { passive: false });
+  mapRef.current.addEventListener("touchmove", onPointerMove, { passive: false });
+  document.addEventListener("mouseup", onPointerUp);
+  document.addEventListener("touchend", onPointerUp);
+};
 
-  const onPointerMove = useCallback((e) => {
-    if (!dragging.current || !mapRef.current) return;
-    if (e.cancelable) e.preventDefault();
-    const { x, y } = getCanvasPos(e);
-    setTokens((prev) => ({
-      ...prev,
-      [dragging.current]: { ...prev[dragging.current], x, y },
-    }));
-  }, []);
+const onPointerMove = useCallback((e) => {
+  if (!dragging.current || !mapRef.current) return;
+  if (e.cancelable) e.preventDefault();
+  const { x, y } = getCanvasPos(e);
+  const { id, offsetX, offsetY } = dragging.current;
+  setTokens((prev) => ({
+    ...prev,
+    [id]: { ...prev[id], x: x - offsetX, y: y - offsetY },
+  }));
+}, []);
 
-  const onPointerUp = useCallback(async () => {
-    if (!dragging.current) return;
-    const id = dragging.current;
-    dragging.current = null;
-    document.removeEventListener("mousemove", onPointerMove);
-    mapRef.current?.removeEventListener("touchmove", onPointerMove);
-    document.removeEventListener("mouseup", onPointerUp);
-    document.removeEventListener("touchend", onPointerUp);
-    // Persiste posição final no RTDB (em pixels do canvas grande)
-    setTokens((prev) => {
-      const t = prev[id];
-      if (t) fbMoveToken(roomId, id, t.x, t.y);
-      return prev;
-    });
-  }, [onPointerMove, roomId]);
+const onPointerUp = useCallback(async () => {
+  if (!dragging.current) return;
+  const { id } = dragging.current;
+  dragging.current = null;
+  document.removeEventListener("mousemove", onPointerMove);
+  mapRef.current?.removeEventListener("touchmove", onPointerMove);
+  document.removeEventListener("mouseup", onPointerUp);
+  document.removeEventListener("touchend", onPointerUp);
+  setTokens((prev) => {
+    const t = prev[id];
+    if (t) fbMoveToken(roomId, id, t.x, t.y);
+    return prev;
+  });
+}, [onPointerMove, roomId]);
 
   // ── 5) Dados — rolagem padrão e por expressão ─────────────
   const rollDice = async (sides, count = diceCount) => {
@@ -3371,7 +3385,7 @@ function CombatArena({ user, room, setView }) {
             >
               <button
                 onClick={() =>
-                  setZoom((z) =>
+                  setZoomSynced((z) =>
                     Math.min(MAX_ZOOM, parseFloat((z + ZOOM_STEP).toFixed(2))),
                   )
                 }
@@ -3395,7 +3409,7 @@ function CombatArena({ user, room, setView }) {
               </button>
               <button
                 onClick={() =>
-                  setZoom((z) =>
+                  setZoomSynced((z) =>
                     Math.max(MIN_ZOOM, parseFloat((z - ZOOM_STEP).toFixed(2))),
                   )
                 }
