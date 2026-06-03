@@ -25,6 +25,7 @@ import {
   where,
   orderBy,
   getDoc,
+  getDocs,
 } from "firebase/firestore";
 
 // ── Realtime Database helpers ─────────────────────────────────
@@ -500,6 +501,8 @@ function LoadingScreen({ msg = "Carregando..." }) {
   );
 }
 
+const isDevUser = (user) => user?.role === "dev";
+
 // ─────────────────────────────────────────────────────────────
 //  AUTH SCREEN — usa fbLogin / fbRegister do auth.js
 //
@@ -514,7 +517,6 @@ function AuthScreen() {
   const [form, setForm] = useState({ name: "", email: "", password: "" });
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
-
   const submit = async () => {
     setErr("");
     if (!form.email || !form.password) return setErr("Preencha email e senha.");
@@ -670,7 +672,14 @@ function AuthScreen() {
 // ─────────────────────────────────────────────────────────────
 //  HOME
 // ─────────────────────────────────────────────────────────────
-function HomeScreen({ user, counts, setView, onLogout }) {
+function HomeScreen({
+  user,
+  counts,
+  setView,
+  onLogout,
+  campaign,
+  onChangeCampaign,
+}) {
   const isMaster = user.role === "master";
   return (
     <div>
@@ -683,9 +692,29 @@ function HomeScreen({ user, counts, setView, onLogout }) {
           Initium
         </div>
         <span
-          className={`badge ${user.role === "master" ? "tag-master" : "tag-player"}`}
+          className={`badge ${
+            isDevUser(user)
+              ? ""
+              : user.role === "master"
+                ? "tag-master"
+                : "tag-player"
+          }`}
+          style={
+            isDevUser(user)
+              ? {
+                  background: "rgba(109,69,255,.25)",
+                  color: "#a78bfa",
+                  border: "1px solid rgba(109,69,255,.5)",
+                }
+              : {}
+          }
         >
-          {user.role === "master" ? (
+          {isDevUser(user) ? (
+            <>
+              <i className="fi fi-rr-settings" style={{ marginRight: 4 }}></i>
+              DEV
+            </>
+          ) : user.role === "master" ? (
             <>
               <i className="fi fi-rr-eye" style={{ marginRight: 4 }}></i>Mestre
             </>
@@ -704,10 +733,28 @@ function HomeScreen({ user, counts, setView, onLogout }) {
         >
           <i className="fi fi-rr-power"></i>
         </button>
+        <button
+          className="btn-icon"
+          title="Trocar campanha"
+          onClick={onChangeCampaign}
+        >
+          <i className="fi fi-rr-shuffle"></i>
+        </button>
       </div>
       <div className="page">
         <div className="home-hero">
           <h1>Olá, {user.name}!</h1>
+          <div
+            style={{
+              fontFamily: "Cinzel,serif",
+              color: "var(--gold)",
+              fontSize: 13,
+              marginTop: 4,
+            }}
+          >
+            <i className="fi fi-rr-map" style={{ marginRight: 6 }}></i>
+            {campaign.name}
+          </div>
           <p className="muted" style={{ fontSize: 14 }}>
             Que sua jornada seja épica.
           </p>
@@ -725,7 +772,7 @@ function HomeScreen({ user, counts, setView, onLogout }) {
                 : "Crie e gerencie teu personagem"}
             </div>
           </div>
-          {isMaster && (
+          {(isMaster || isDevUser(user)) && (
             <div className="home-card" onClick={() => setView("enemies")}>
               <div className="card-count">{counts.enemies}</div>
               <div className="card-icon">
@@ -768,7 +815,7 @@ function HomeScreen({ user, counts, setView, onLogout }) {
 // ─────────────────────────────────────────────────────────────
 //  FICHA DE PERSONAGEM — FORMULÁRIO (salva no Firestore)
 // ─────────────────────────────────────────────────────────────
-function CharacterForm({ user, onSave, onBack, initial }) {
+function CharacterForm({ user, onSave, onBack, initial, campaign }) {
   const [sys, setSys] = useState(initial?.system || "dnd5e");
   const [tab, setTab] = useState(0);
   const [saving, setSaving] = useState(false);
@@ -818,6 +865,7 @@ function CharacterForm({ user, onSave, onBack, initial }) {
       } else {
         await addDoc(collection(db, "characters"), {
           ...data,
+          campaignId: campaign.firestoreId,
           createdAt: Date.now(),
         });
       }
@@ -1097,7 +1145,7 @@ function CharacterForm({ user, onSave, onBack, initial }) {
 // ─────────────────────────────────────────────────────────────
 //  PERSONAGENS — LISTAGEM (Firestore onSnapshot)
 // ─────────────────────────────────────────────────────────────
-function CharactersScreen({ user, setView }) {
+function CharactersScreen({ user, setView, campaign }) {
   const [chars, setChars] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
@@ -1105,11 +1153,11 @@ function CharactersScreen({ user, setView }) {
   const isMaster = user.role === "master";
 
   useEffect(() => {
-    const q = isMaster
+    const q = isDevUser(user)
       ? query(collection(db, "characters"), orderBy("createdAt", "desc"))
       : query(
           collection(db, "characters"),
-          where("ownerId", "==", user.uid),
+          where("campaignId", "==", campaign.firestoreId),
           orderBy("createdAt", "desc"),
         );
 
@@ -1137,6 +1185,7 @@ function CharactersScreen({ user, setView }) {
       <CharacterForm
         user={user}
         initial={editing}
+        campaign={campaign}
         onBack={() => {
           setCreating(false);
           setEditing(null);
@@ -1187,8 +1236,17 @@ function CharactersScreen({ user, setView }) {
             <div
               key={c.firestoreId}
               className="card mb12"
-              onClick={() => setEditing(c)}
-              style={{ cursor: "pointer" }}
+              onClick={() =>
+                isMaster || c.ownerId === user.uid || isDevUser(user)
+                  ? setEditing(c)
+                  : null
+              }
+              style={{
+                cursor:
+                  isMaster || c.ownerId === user.uid || isDevUser(user)
+                    ? "pointer"
+                    : "default",
+              }}
             >
               <div className="flex-between mb8">
                 <div className="flex gap12" style={{ flex: 1, minWidth: 0 }}>
@@ -1269,7 +1327,7 @@ function CharactersScreen({ user, setView }) {
               >
                 {c.hp}/{c.maxHp} HP
               </div>
-              {(isMaster || c.ownerId === user.uid) && (
+              {(isMaster || c.ownerId === user.uid || isDevUser(user)) && (
                 <button
                   className="btn-danger btn-sm mt8"
                   style={{ fontSize: 11 }}
@@ -1294,7 +1352,7 @@ function CharactersScreen({ user, setView }) {
 //  Tem os mesmos campos de ficha que os personagens,
 //  + Tipo de Criatura universal + mecânicas de Boss
 // ─────────────────────────────────────────────────────────────
-function EnemyForm({ user, onSave, onBack, initial }) {
+function EnemyForm({ user, onSave, onBack, initial, campaign }) {
   const [saving, setSaving] = useState(false);
   const [sys, setSys] = useState(initial?.system || "dnd5e");
   const [tab, setTab] = useState(0);
@@ -1369,6 +1427,7 @@ function EnemyForm({ user, onSave, onBack, initial }) {
       } else {
         await addDoc(collection(db, "enemies"), {
           ...data,
+          campaignId: campaign.firestoreId,
           createdAt: Date.now(),
         });
       }
@@ -1791,14 +1850,20 @@ function EnemyForm({ user, onSave, onBack, initial }) {
 // ─────────────────────────────────────────────────────────────
 //  INIMIGOS — LISTAGEM (Firestore onSnapshot)
 // ─────────────────────────────────────────────────────────────
-function EnemiesScreen({ user, setView }) {
+function EnemiesScreen({ user, setView, campaign }) {
   const [enemies, setEnemies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
-    const q = query(collection(db, "enemies"), orderBy("createdAt", "desc"));
+    const q = isDevUser(user)
+      ? query(collection(db, "enemies"), orderBy("createdAt", "desc"))
+      : query(
+          collection(db, "enemies"),
+          where("campaignId", "==", campaign.firestoreId),
+          orderBy("createdAt", "desc"),
+        );
     const unsub = onSnapshot(q, (snap) => {
       setEnemies(snap.docs.map((d) => ({ firestoreId: d.id, ...d.data() })));
       setLoading(false);
@@ -1816,6 +1881,7 @@ function EnemiesScreen({ user, setView }) {
       <EnemyForm
         user={user}
         initial={editing}
+        campaign={campaign}
         onBack={() => {
           setCreating(false);
           setEditing(null);
@@ -1989,16 +2055,18 @@ function EnemiesScreen({ user, setView }) {
               >
                 {e.hp}/{e.maxHp} HP
               </div>
-              <button
-                className="btn-danger btn-sm mt8"
-                style={{ fontSize: 11 }}
-                onClick={(ev) => {
-                  ev.stopPropagation();
-                  del(e.firestoreId);
-                }}
-              >
-                <i className="fi fi-rr-trash"></i>
-              </button>
+              {(user.role === "master" || isDevUser(user)) && (
+                <button
+                  className="btn-danger btn-sm mt8"
+                  style={{ fontSize: 11 }}
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    del(e.firestoreId);
+                  }}
+                >
+                  <i className="fi fi-rr-trash"></i>
+                </button>
+              )}
             </div>
           );
         })}
@@ -2013,12 +2081,13 @@ function EnemiesScreen({ user, setView }) {
 //  • Todos os usuários vêem — só Mestre adiciona/remove eventos
 //  • Ao abrir, navega para o último dia com evento (ou Jan 1873)
 // ─────────────────────────────────────────────────────────────
-const CAL_START_YEAR = 1873;
 
-function CalendarScreen({ user, setView }) {
-  const isMaster = user.role === "master";
+function CalendarScreen({ user, setView, campaign }) {
+  const isMaster = user.role === "master" || isDevUser(user);
 
-  const [yr, setYr] = useState(CAL_START_YEAR);
+  const CAL_START_YEAR = campaign.calendarYear || 1873;
+
+  const [yr, setYr] = useState(campaign.calendarYear || 1873);
   const [mo, setMo] = useState(0);
   const [sel, setSel] = useState(null);
   const [events, setEvents] = useState([]);
@@ -2029,7 +2098,11 @@ function CalendarScreen({ user, setView }) {
 
   // Todos os eventos (Mestre filtra por si; todos vêem tudo)
   useEffect(() => {
-    const q = query(collection(db, "events"), orderBy("date", "asc"));
+    const q = query(
+      collection(db, "events"),
+      where("campaignId", "==", campaign.firestoreId),
+      orderBy("date", "asc"),
+    );
     const unsub = onSnapshot(q, (snap) => {
       const evs = snap.docs.map((d) => ({ firestoreId: d.id, ...d.data() }));
       setEvents(evs);
@@ -2063,6 +2136,7 @@ function CalendarScreen({ user, setView }) {
         clean({
           ...form,
           date: selKey,
+          campaignId: campaign.firestoreId,
           masterId: user.uid,
           createdAt: Date.now(),
         }),
@@ -2349,7 +2423,13 @@ function CalendarScreen({ user, setView }) {
 // ─────────────────────────────────────────────────────────────
 //  SALAS DE COMBATE (Firestore metadados + RTDB combate)
 // ─────────────────────────────────────────────────────────────
-function RoomsScreen({ user, setView, setActiveRoom }) {
+function RoomsScreen({
+  user,
+  setView,
+  setActiveRoom,
+  activeCampaign,
+  campaign,
+}) {
   const [rooms, setRooms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -2362,9 +2442,23 @@ function RoomsScreen({ user, setView, setActiveRoom }) {
   const isMaster = user.role === "master";
 
   useEffect(() => {
-    const q = query(collection(db, "rooms"), orderBy("createdAt", "desc"));
+    const q = isDevUser(user)
+      ? query(collection(db, "rooms"), orderBy("createdAt", "desc"))
+      : query(
+          collection(db, "rooms"),
+          where("campaignId", "==", campaign.firestoreId),
+          orderBy("createdAt", "desc"),
+        );
     const unsub = onSnapshot(q, (snap) => {
-      setRooms(snap.docs.map((d) => ({ firestoreId: d.id, ...d.data() })));
+      const allRooms = snap.docs.map((d) => ({
+        firestoreId: d.id,
+        ...d.data(),
+      }));
+      setRooms(
+        user.role === "master" || isDevUser(user)
+          ? allRooms
+          : allRooms.filter((r) => !r.isDevRoom),
+      );
       setLoading(false);
     });
     return () => unsub();
@@ -2381,8 +2475,10 @@ function RoomsScreen({ user, setView, setActiveRoom }) {
           name: form.name,
           system: form.system,
           description: form.description,
+          campaignId: campaign.firestoreId,
           masterId: user.uid,
           masterName: user.name,
+          isDevRoom: isDevUser(user),
           createdAt: Date.now(),
         }),
       );
@@ -2418,7 +2514,7 @@ function RoomsScreen({ user, setView, setActiveRoom }) {
           <i className="fi fi-rr-arrow-left"></i>
         </button>
         <div className="nav-title">Salas de Combate</div>
-        {isMaster && (
+        {(isMaster || isDevUser(user)) && (
           <button className="btn-gold btn-sm" onClick={() => setShowForm(true)}>
             <i className="fi fi-rr-plus" style={{ marginRight: 4 }}></i>Criar
           </button>
@@ -2430,14 +2526,14 @@ function RoomsScreen({ user, setView, setActiveRoom }) {
           <div className="text-center" style={{ padding: "48px 0" }}>
             <div style={{ fontSize: 48 }}>
               <i
-                className="fi fi-rr-map"
+                className="fi fi-rr-two-swords"
                 style={{ fontSize: 48, color: "var(--text3)" }}
               ></i>
             </div>
             <p className="muted">
               {isMaster
-                ? "Cria uma sala de combate!"
-                : "Aguarda o Mestre criar uma sala."}
+                ? "Crie uma sala de combate!"
+                : "Aguarde o Mestre criar uma sala."}
             </p>
           </div>
         )}
@@ -2499,7 +2595,7 @@ function RoomsScreen({ user, setView, setActiveRoom }) {
                 >
                   Entrar na Sala
                 </button>
-                {isMaster && r.masterId === user.uid && (
+                {(r.masterId === user.uid || isDevUser(user)) && (
                   <button
                     className="btn-danger btn-sm"
                     onClick={() => delRoom(r)}
@@ -2687,10 +2783,12 @@ function TokenFace({ t, size = 40 }) {
   );
 }
 
-function CombatArena({ user, room, setView }) {
+function CombatArena({ user, room, setView, campaign }) {
   const roomId = room.firestoreId;
   const rtdbPath = `rooms/${roomId}`;
-  const isMaster = user.role === "master";
+  const isMaster =
+    (user.role === "master" && campaign.masterId === user.uid) ||
+    isDevUser(user);
 
   // ── Estado RTDB (sincronizado em tempo real) ───────────────
   const [tokens, setTokens] = useState({});
@@ -2744,6 +2842,14 @@ function CombatArena({ user, room, setView }) {
 
   const [showTurnBanner, setShowTurnBanner] = useState(false);
 
+  const setZoomSynced = (fn) => {
+    setZoom((prev) => {
+      const next = typeof fn === "function" ? fn(prev) : fn;
+      zoomRef.current = next;
+      return next;
+    });
+  };
+
   // Mostrar turno atual no centro da tela a cada mudança, por 2 segundos
   useEffect(() => {
     if (!initiative.length) return;
@@ -2778,11 +2884,13 @@ function CombatArena({ user, room, setView }) {
     if (!showAddToken) return;
     const qC = query(
       collection(db, "characters"),
+      where("campaignId", "==", campaign.firestoreId),
       where("system", "==", room.system),
       orderBy("createdAt", "desc"),
     );
     const qE = query(
       collection(db, "enemies"),
+      where("campaignId", "==", campaign.firestoreId),
       where("system", "==", room.system),
       orderBy("createdAt", "desc"),
     );
@@ -2810,14 +2918,6 @@ function CombatArena({ user, room, setView }) {
     [rtdbPath, user.name],
   );
 
-  const setZoomSynced = (fn) => {
-  setZoom(prev => {
-    const next = typeof fn === "function" ? fn(prev) : fn;
-    zoomRef.current = next;
-    return next;
-  });
-};
-
   const rtdbUpdate = useCallback(async (path, data) => {
     await update(ref(rtdb, path), data);
   }, []);
@@ -2833,60 +2933,62 @@ function CombatArena({ user, room, setView }) {
     return token.ownerId === user.uid; // player: só o próprio
   };
 
-const getCanvasPos = (e) => {
-  if (!scrollRef.current) return { x: MAP_W / 2, y: MAP_H / 2 };
-  const rect = scrollRef.current.getBoundingClientRect();
-  const cx = e.touches ? e.touches[0].clientX : e.clientX;
-  const cy = e.touches ? e.touches[0].clientY : e.clientY;
-  const rawX = cx - rect.left + scrollRef.current.scrollLeft;
-  const rawY = cy - rect.top + scrollRef.current.scrollTop;
-  return {
-    x: Math.max(22, Math.min(MAP_W - 22, rawX / zoomRef.current)),
-    y: Math.max(22, Math.min(MAP_H - 22, rawY / zoomRef.current)),
+  const getCanvasPos = (e) => {
+    if (!scrollRef.current) return { x: MAP_W / 2, y: MAP_H / 2 };
+    const rect = scrollRef.current.getBoundingClientRect();
+    const cx = e.touches ? e.touches[0].clientX : e.clientX;
+    const cy = e.touches ? e.touches[0].clientY : e.clientY;
+    const rawX = cx - rect.left + scrollRef.current.scrollLeft;
+    const rawY = cy - rect.top + scrollRef.current.scrollTop;
+    return {
+      x: Math.max(22, Math.min(MAP_W - 22, rawX / zoomRef.current)),
+      y: Math.max(22, Math.min(MAP_H - 22, rawY / zoomRef.current)),
+    };
   };
-};
 
-const onTokenPointerDown = (e, tokenId) => {
-  const tok = tokens[tokenId];
-  if (!tok || !canDrag(tok)) return;
-  e.stopPropagation();
-  const pos = getCanvasPos(e);
-  dragging.current = {
-    id: tokenId,
-    offsetX: pos.x - (tok.x || MAP_W / 2),
-    offsetY: pos.y - (tok.y || MAP_H / 2),
+  const onTokenPointerDown = (e, tokenId) => {
+    const tok = tokens[tokenId];
+    if (!tok || !canDrag(tok)) return;
+    e.stopPropagation();
+    const pos = getCanvasPos(e);
+    dragging.current = {
+      id: tokenId,
+      offsetX: pos.x - (tok.x || MAP_W / 2),
+      offsetY: pos.y - (tok.y || MAP_H / 2),
+    };
+    document.addEventListener("mousemove", onPointerMove, { passive: false });
+    mapRef.current.addEventListener("touchmove", onPointerMove, {
+      passive: false,
+    });
+    document.addEventListener("mouseup", onPointerUp);
+    document.addEventListener("touchend", onPointerUp);
   };
-  document.addEventListener("mousemove", onPointerMove, { passive: false });
-  mapRef.current.addEventListener("touchmove", onPointerMove, { passive: false });
-  document.addEventListener("mouseup", onPointerUp);
-  document.addEventListener("touchend", onPointerUp);
-};
 
-const onPointerMove = useCallback((e) => {
-  if (!dragging.current || !mapRef.current) return;
-  if (e.cancelable) e.preventDefault();
-  const { x, y } = getCanvasPos(e);
-  const { id, offsetX, offsetY } = dragging.current;
-  setTokens((prev) => ({
-    ...prev,
-    [id]: { ...prev[id], x: x - offsetX, y: y - offsetY },
-  }));
-}, []);
+  const onPointerMove = useCallback((e) => {
+    if (!dragging.current || !mapRef.current) return;
+    if (e.cancelable) e.preventDefault();
+    const { x, y } = getCanvasPos(e);
+    const { id, offsetX, offsetY } = dragging.current;
+    setTokens((prev) => ({
+      ...prev,
+      [id]: { ...prev[id], x: x - offsetX, y: y - offsetY },
+    }));
+  }, []);
 
-const onPointerUp = useCallback(async () => {
-  if (!dragging.current) return;
-  const { id } = dragging.current;
-  dragging.current = null;
-  document.removeEventListener("mousemove", onPointerMove);
-  mapRef.current?.removeEventListener("touchmove", onPointerMove);
-  document.removeEventListener("mouseup", onPointerUp);
-  document.removeEventListener("touchend", onPointerUp);
-  setTokens((prev) => {
-    const t = prev[id];
-    if (t) fbMoveToken(roomId, id, t.x, t.y);
-    return prev;
-  });
-}, [onPointerMove, roomId]);
+  const onPointerUp = useCallback(async () => {
+    if (!dragging.current) return;
+    const { id } = dragging.current;
+    dragging.current = null;
+    document.removeEventListener("mousemove", onPointerMove);
+    mapRef.current?.removeEventListener("touchmove", onPointerMove);
+    document.removeEventListener("mouseup", onPointerUp);
+    document.removeEventListener("touchend", onPointerUp);
+    setTokens((prev) => {
+      const t = prev[id];
+      if (t) fbMoveToken(roomId, id, t.x, t.y);
+      return prev;
+    });
+  }, [onPointerMove, roomId]);
 
   // ── 5) Dados — rolagem padrão e por expressão ─────────────
   const rollDice = async (sides, count = diceCount) => {
@@ -2971,6 +3073,7 @@ const onPointerUp = useCallback(async () => {
       hp: source.hp || "20",
       maxHp: source.maxHp || "20",
       ownerId: source.ownerId || null,
+      sourceId: source.firestoreId || null,
       x,
       y,
     });
@@ -3063,6 +3166,9 @@ const onPointerUp = useCallback(async () => {
         </button>
         <div className="nav-title" style={{ fontSize: 13 }}>
           {room.name}
+          <span style={{ color: "var(--text3)", fontSize: 11, marginLeft: 8 }}>
+            · {campaign.name}
+          </span>
         </div>
         <div className="flex gap8">
           <div className="live-dot" />
@@ -4325,6 +4431,44 @@ const onPointerUp = useCallback(async () => {
                             </button>
                           </div>
                           <BulkHpInput token={t} onApply={changeTokenHp} />
+                          {/* ── Botão Ver Ficha ── */}
+                          <button
+                            className="btn-outline btn-sm"
+                            style={{ width: "100%", fontSize: 11 }}
+                            onClick={async () => {
+                              if (!t.sourceId) {
+                                alert("Este token não tem ficha associada.");
+                                return;
+                              }
+                              try {
+                                const coll = t.isEnemy
+                                  ? "enemies"
+                                  : "characters";
+                                const snap = await getDoc(
+                                  doc(db, coll, t.sourceId),
+                                );
+                                if (snap.exists()) {
+                                  setViewingSheet({
+                                    type: t.isEnemy ? "enemy" : "char",
+                                    data: {
+                                      firestoreId: snap.id,
+                                      ...snap.data(),
+                                    },
+                                  });
+                                } else {
+                                  alert("Ficha não encontrada.");
+                                }
+                              } catch (e) {
+                                alert("Erro: " + e.message);
+                              }
+                            }}
+                          >
+                            <i
+                              className="fi fi-rr-scroll"
+                              style={{ marginRight: 4 }}
+                            ></i>
+                            Ver Ficha
+                          </button>
                         </div>
                       )}
                     </div>
@@ -4582,6 +4726,43 @@ const onPointerUp = useCallback(async () => {
                             </button>
                           </div>
                           <BulkHpInput token={t} onApply={changeTokenHp} />
+                          <button
+                            className="btn-outline btn-sm"
+                            style={{ width: "100%", fontSize: 11 }}
+                            onClick={async () => {
+                              if (!t.sourceId) {
+                                alert("Este token não tem ficha associada.");
+                                return;
+                              }
+                              try {
+                                const coll = t.isEnemy
+                                  ? "enemies"
+                                  : "characters";
+                                const snap = await getDoc(
+                                  doc(db, coll, t.sourceId),
+                                );
+                                if (snap.exists()) {
+                                  setViewingSheet({
+                                    type: t.isEnemy ? "enemy" : "char",
+                                    data: {
+                                      firestoreId: snap.id,
+                                      ...snap.data(),
+                                    },
+                                  });
+                                } else {
+                                  alert("Ficha não encontrada.");
+                                }
+                              } catch (e) {
+                                alert("Erro: " + e.message);
+                              }
+                            }}
+                          >
+                            <i
+                              className="fi fi-rr-scroll"
+                              style={{ marginRight: 4 }}
+                            ></i>
+                            Ver Ficha
+                          </button>
                         </div>
                       )}
                     </div>
@@ -5166,6 +5347,479 @@ const onPointerUp = useCallback(async () => {
           </div>
         </div>
       )}
+      {/* ════ MODAL: Ver Ficha ══════════════════════════════ */}
+      {viewingSheet && (
+        <div className="modal-overlay" onClick={() => setViewingSheet(null)}>
+          <div
+            className="modal-sheet"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxHeight: "90vh" }}
+          >
+            <div className="modal-handle" />
+            <div className="flex-between mb16">
+              <h3 style={{ fontSize: 16 }}>
+                {viewingSheet.data.avatarUrl ? (
+                  <img
+                    src={viewingSheet.data.avatarUrl}
+                    style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: "50%",
+                      objectFit: "cover",
+                      marginRight: 10,
+                      verticalAlign: "middle",
+                    }}
+                    alt=""
+                  />
+                ) : viewingSheet.data.avatar?.startsWith("fi ") ? (
+                  <i
+                    className={viewingSheet.data.avatar}
+                    style={{ marginRight: 8 }}
+                  ></i>
+                ) : null}
+                {viewingSheet.data.name}
+              </h3>
+              <button
+                className="btn-icon"
+                onClick={() => setViewingSheet(null)}
+              >
+                <i className="fi fi-rr-cross-small"></i>
+              </button>
+            </div>
+
+            {/* HP e CA */}
+            <div className="grid3 mb12">
+              <div className="stat-box">
+                <div className="stat-name">HP</div>
+                <div
+                  style={{
+                    fontFamily: "Cinzel,serif",
+                    color: "var(--gold)",
+                    fontSize: 16,
+                  }}
+                >
+                  {viewingSheet.data.hp}/{viewingSheet.data.maxHp}
+                </div>
+              </div>
+              {viewingSheet.data.ac && (
+                <div className="stat-box">
+                  <div className="stat-name">CA</div>
+                  <div
+                    style={{
+                      fontFamily: "Cinzel,serif",
+                      color: "var(--gold)",
+                      fontSize: 16,
+                    }}
+                  >
+                    {viewingSheet.data.ac}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Atributos */}
+            {viewingSheet.data.stats &&
+              Object.keys(viewingSheet.data.stats).length > 0 && (
+                <div className="mb12">
+                  <div className="label mb8">Atributos</div>
+                  <div className="grid3">
+                    {Object.entries(viewingSheet.data.stats).map(([k, v]) => (
+                      <div key={k} className="stat-box">
+                        <div className="stat-name">{k}</div>
+                        <div
+                          style={{
+                            fontFamily: "Cinzel,serif",
+                            color: "var(--gold-l)",
+                            fontSize: 16,
+                          }}
+                        >
+                          {v}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+            {/* Campos do sistema */}
+            {viewingSheet.data.fields && (
+              <div className="mb12">
+                {Object.entries(viewingSheet.data.fields)
+                  .filter(([, v]) => v)
+                  .map(([k, v]) => (
+                    <div key={k} className="mb8">
+                      <div className="label">{k}</div>
+                      <div style={{ color: "var(--text)", fontSize: 14 }}>
+                        {v}
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            )}
+
+            {/* Ataques (inimigos) */}
+            {viewingSheet.data.attacks && (
+              <div className="mb12">
+                <div className="label mb4">Ataques</div>
+                <div
+                  style={{
+                    color: "var(--text)",
+                    whiteSpace: "pre-wrap",
+                    fontSize: 14,
+                  }}
+                >
+                  {viewingSheet.data.attacks}
+                </div>
+              </div>
+            )}
+
+            {/* Habilidades especiais */}
+            {viewingSheet.data.specialAbilities && (
+              <div className="mb12">
+                <div className="label mb4">Habilidades Especiais</div>
+                <div
+                  style={{
+                    color: "var(--text2)",
+                    whiteSpace: "pre-wrap",
+                    fontSize: 14,
+                  }}
+                >
+                  {viewingSheet.data.specialAbilities}
+                </div>
+              </div>
+            )}
+
+            {/* Notas */}
+            {viewingSheet.data.notes && (
+              <div className="mb12">
+                <div className="label mb4">Notas</div>
+                <div
+                  style={{
+                    color: "var(--text2)",
+                    fontSize: 14,
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
+                  {viewingSheet.data.notes}
+                </div>
+              </div>
+            )}
+
+            {/* Backstory (personagens) */}
+            {viewingSheet.data.backstory && (
+              <div>
+                <div className="label mb4">História</div>
+                <div
+                  style={{
+                    color: "var(--text2)",
+                    fontSize: 14,
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
+                  {viewingSheet.data.backstory}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CampaignScreen({ user, onEnter, onLogout }) {
+  const isMaster = user.role === "master";
+  const [campaigns, setCampaigns] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
+  const [showJoin, setShowJoin] = useState(false);
+  const [form, setForm] = useState({
+    name: "",
+    code: "",
+    calendarYear: "2026",
+  });
+  const [joinCode, setJoinCode] = useState("");
+  const [err, setErr] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const q = isDevUser(user)
+      ? query(collection(db, "campaigns"), orderBy("createdAt", "desc"))
+      : query(
+          collection(db, "campaigns"),
+          where("members", "array-contains", user.uid),
+          orderBy("createdAt", "desc"),
+        );
+    const unsub = onSnapshot(q, (snap) => {
+      setCampaigns(snap.docs.map((d) => ({ firestoreId: d.id, ...d.data() })));
+      setLoading(false);
+    });
+    return () => unsub();
+  }, [user.uid]);
+
+  const createCampaign = async () => {
+    if (!form.name.trim() || !form.code.trim())
+      return setErr("Preenche nome e código.");
+    const code = form.code.toUpperCase().trim();
+    setSaving(true);
+    try {
+      const existing = await getDocs(
+        query(collection(db, "campaigns"), where("code", "==", code)),
+      );
+      if (!existing.empty) return setErr("Código já em uso.");
+      const ref = await addDoc(collection(db, "campaigns"), {
+        name: form.name.trim(),
+        code,
+        masterId: user.uid,
+        masterName: user.name,
+        members: [user.uid],
+        calendarYear: parseInt(form.calendarYear) || 1873,
+        createdAt: Date.now(),
+      });
+      onEnter({
+        firestoreId: ref.id,
+        name: form.name.trim(),
+        masterId: user.uid,
+        code,
+        calendarYear: parseInt(form.calendarYear) || 1873,
+      });
+    } catch (e) {
+      setErr("Erro: " + e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const joinCampaign = async () => {
+    if (!joinCode.trim()) return;
+    const code = joinCode.toUpperCase().trim();
+    setSaving(true);
+    try {
+      const snap = await getDocs(
+        query(collection(db, "campaigns"), where("code", "==", code)),
+      );
+      if (snap.empty) return setErr("Código inválido.");
+      const campDoc = snap.docs[0];
+      const camp = { firestoreId: campDoc.id, ...campDoc.data() };
+      if (!camp.members?.includes(user.uid)) {
+        await updateDoc(doc(db, "campaigns", campDoc.id), {
+          members: [...(camp.members || []), user.uid],
+        });
+      }
+      onEnter({ ...camp, firestoreId: campDoc.id });
+    } catch (e) {
+      setErr("Erro: " + e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const leaveCampaign = async (camp) => {
+    if (!window.confirm(`Sair de "${camp.name}"?`)) return;
+    await updateDoc(doc(db, "campaigns", camp.firestoreId), {
+      members: camp.members.filter((id) => id !== user.uid),
+    });
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: "var(--bg)" }}>
+      <div className="nav">
+        <div className="nav-title">
+          <img
+            src="initium-white.png"
+            style={{ width: 28, marginRight: 8, verticalAlign: "middle" }}
+          />
+          Initium
+        </div>
+        <button className="btn-icon" title="Sair" onClick={onLogout}>
+          <i className="fi fi-rr-power"></i>
+        </button>
+      </div>
+      <div className="page">
+        <div className="home-hero">
+          <h1>Campanhas</h1>
+          <p className="muted" style={{ fontSize: 15 }}>
+            Olá, {user.name}! Escolha uma campanha para entrar.
+          </p>
+        </div>
+
+        {loading && <LoadingScreen msg="Buscando campanhas..." />}
+
+        {!loading && campaigns.length === 0 && (
+          <div className="text-center" style={{ padding: "32px 0" }}>
+            <div style={{ fontSize: 48, marginBottom: 12 }}>
+              <i
+                className="fi fi-rr-map"
+                style={{ fontSize: 48, color: "var(--text3)" }}
+              ></i>
+            </div>
+            <p className="muted">Nenhuma campanha ainda.</p>
+          </div>
+        )}
+
+        {campaigns.map((c) => (
+          <div key={c.firestoreId} className="room-card mb12">
+            <div className="flex-between">
+              <div
+                style={{ flex: 1, minWidth: 0, cursor: "pointer" }}
+                onClick={() => onEnter(c)}
+              >
+                <div
+                  style={{
+                    fontFamily: "Cinzel,serif",
+                    color: "var(--gold)",
+                    fontSize: 16,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {c.name}
+                </div>
+                <div className="muted small">
+                  Mestre: {c.masterName} · Código: {c.code}
+                </div>
+                {c.masterId === user.uid && (
+                  <span
+                    className="badge tag-master"
+                    style={{ fontSize: 10, marginTop: 4 }}
+                  >
+                    Tua campanha
+                  </span>
+                )}
+              </div>
+              <div className="flex gap8">
+                <button className="btn-gold btn-sm" onClick={() => onEnter(c)}>
+                  Entrar
+                </button>
+                {c.masterId !== user.uid && (
+                  <button
+                    className="btn-icon btn-sm"
+                    title="Sair da campanha"
+                    onClick={() => leaveCampaign(c)}
+                  >
+                    <i className="fi fi-rr-exit"></i>
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+
+        {err && <div className="error-msg">{err}</div>}
+
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+            marginTop: 16,
+          }}
+        >
+          {isMaster && (
+            <button
+              className="btn-gold"
+              onClick={() => {
+                setShowCreate(true);
+                setErr("");
+              }}
+            >
+              <i className="fi fi-rr-plus" style={{ marginRight: 8 }}></i>
+              Criar Campanha
+            </button>
+          )}
+          <button
+            className="btn-outline"
+            onClick={() => {
+              setShowJoin(true);
+              setErr("");
+            }}
+          >
+            <i className="fi fi-rr-link" style={{ marginRight: 8 }}></i>
+            Entrar com Código
+          </button>
+        </div>
+      </div>
+
+      {/* Modal criar */}
+      {showCreate && (
+        <div className="modal-overlay" onClick={() => setShowCreate(false)}>
+          <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-handle" />
+            <h3 style={{ fontSize: 16, marginBottom: 16 }}>Nova Campanha</h3>
+            <div className="mb12">
+              <div className="label">Nome da Campanha</div>
+              <input
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                placeholder="A Maldição de Strahd..."
+              />
+            </div>
+            <div className="mb12">
+              <div className="label">Código de Acesso</div>
+              <input
+                value={form.code}
+                onChange={(e) =>
+                  setForm({ ...form, code: e.target.value.toUpperCase() })
+                }
+                placeholder="Ex: STRH42"
+                maxLength={8}
+              />
+              <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
+                Compartilha este código com os jogadores.
+              </div>
+            </div>
+            <div className="mb16">
+              <div className="label">Ano inicial do Calendário</div>
+              <input
+                type="number"
+                value={form.calendarYear}
+                onChange={(e) =>
+                  setForm({ ...form, calendarYear: e.target.value })
+                }
+                placeholder="1873"
+              />
+            </div>
+            {err && <div className="error-msg">{err}</div>}
+            <button
+              className="btn-gold"
+              onClick={createCampaign}
+              disabled={saving}
+            >
+              {saving ? "..." : "Criar"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal entrar */}
+      {showJoin && (
+        <div className="modal-overlay" onClick={() => setShowJoin(false)}>
+          <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-handle" />
+            <h3 style={{ fontSize: 16, marginBottom: 16 }}>
+              Entrar em Campanha
+            </h3>
+            <div className="mb16">
+              <div className="label">Código da Campanha</div>
+              <input
+                value={joinCode}
+                onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                placeholder="Ex: STRH42"
+                maxLength={8}
+              />
+            </div>
+            {err && <div className="error-msg">{err}</div>}
+            <button
+              className="btn-gold"
+              onClick={joinCampaign}
+              disabled={saving}
+            >
+              {saving ? "..." : "Entrar"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -5184,6 +5838,7 @@ export default function App() {
     events: 0,
     rooms: 0,
   });
+  const [activeCampaign, setActiveCampaign] = useState(null);
 
   // ── Persiste sessão com onAuthStateChanged ────────────────
   //
@@ -5246,14 +5901,30 @@ export default function App() {
 
   // ── Contadores dos cards (onSnapshot) ────────────────────
   useEffect(() => {
-    if (!user) return;
+    if (!user || !activeCampaign) return;
     const isMaster = user.role === "master";
     const qC = isMaster
-      ? collection(db, "characters")
-      : query(collection(db, "characters"), where("ownerId", "==", user.uid));
-    const qE = collection(db, "enemies");
-    const qEv = collection(db, "events"); // todos vêem — filtro de escrita é no componente
-    const qR = collection(db, "rooms");
+      ? query(
+          collection(db, "characters"),
+          where("campaignId", "==", activeCampaign.firestoreId),
+        )
+      : query(
+          collection(db, "characters"),
+          where("campaignId", "==", activeCampaign.firestoreId),
+          where("ownerId", "==", user.uid),
+        );
+    const qE = query(
+      collection(db, "enemies"),
+      where("campaignId", "==", activeCampaign.firestoreId),
+    );
+    const qEv = query(
+      collection(db, "events"),
+      where("campaignId", "==", activeCampaign.firestoreId),
+    );
+    const qR = query(
+      collection(db, "rooms"),
+      where("campaignId", "==", activeCampaign.firestoreId),
+    );
     const u1 = onSnapshot(qC, (s) =>
       setCounts((c) => ({ ...c, characters: s.size })),
     );
@@ -5272,7 +5943,7 @@ export default function App() {
       u3();
       u4();
     };
-  }, [user]);
+  }, [user, activeCampaign]);
 
   const handleLogout = async () => {
     await signOut(auth);
@@ -5284,6 +5955,14 @@ export default function App() {
   // ── Aguarda verificação ───────────────────────────────────
   if (user === null) return <LoadingScreen msg="Verificando sessão..." />;
   if (user === false) return <AuthScreen />;
+  if (!activeCampaign)
+    return (
+      <CampaignScreen
+        user={user}
+        onEnter={(camp) => setActiveCampaign(camp)}
+        onLogout={handleLogout}
+      />
+    );
 
   return (
     <div>
@@ -5293,22 +5972,46 @@ export default function App() {
           counts={counts}
           setView={setView}
           onLogout={handleLogout}
+          campaign={activeCampaign}
+          onChangeCampaign={() => setActiveCampaign(null)}
         />
       )}
       {view === "characters" && (
-        <CharactersScreen user={user} setView={setView} />
+        <CharactersScreen
+          user={user}
+          setView={setView}
+          campaign={activeCampaign}
+        />
       )}
-      {view === "enemies" && <EnemiesScreen user={user} setView={setView} />}
-      {view === "calendar" && <CalendarScreen user={user} setView={setView} />}
+      {view === "enemies" && (
+        <EnemiesScreen
+          user={user}
+          setView={setView}
+          campaign={activeCampaign}
+        />
+      )}
+      {view === "calendar" && (
+        <CalendarScreen
+          user={user}
+          setView={setView}
+          campaign={activeCampaign}
+        />
+      )}
       {view === "rooms" && (
         <RoomsScreen
           user={user}
           setView={setView}
           setActiveRoom={setActiveRoom}
+          campaign={activeCampaign}
         />
       )}
       {view === "combat" && activeRoom && (
-        <CombatArena user={user} room={activeRoom} setView={setView} />
+        <CombatArena
+          user={user}
+          room={activeRoom}
+          setView={setView}
+          campaign={activeCampaign}
+        />
       )}
     </div>
   );
