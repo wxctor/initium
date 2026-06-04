@@ -5622,12 +5622,20 @@ function CampaignScreen({ user, onEnter, onLogout }) {
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg)" }}>
+    <div style={{ minHeight: "100vh", background: "var(--bg)"}}>
       <div className="nav">
-        <div className="nav-title">
+        <div
+          className="nav-title"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            verticalAlign: "middle",
+            color: "var(--text)",
+          }}
+        >
           <img
             src="initium-white.png"
-            style={{ width: 28, marginRight: 8, verticalAlign: "middle" }}
+            style={{ width: 32, verticalAlign: "middle", height: "auto"}}
           />
           Initium
         </div>
