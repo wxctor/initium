@@ -5622,7 +5622,7 @@ function CampaignScreen({ user, onEnter, onLogout }) {
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg)"}}>
+    <div style={{ minHeight: "100vh", background: "var(--bg)" }}>
       <div className="nav">
         <div
           className="nav-title"
@@ -5635,7 +5635,7 @@ function CampaignScreen({ user, onEnter, onLogout }) {
         >
           <img
             src="initium-white.png"
-            style={{ width: 32, verticalAlign: "middle", height: "auto"}}
+            style={{ width: 32, verticalAlign: "middle", height: "auto" }}
           />
           Initium
         </div>
@@ -5832,21 +5832,64 @@ function CampaignScreen({ user, onEnter, onLogout }) {
   );
 }
 
+const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
+function saveSession(campaign, view, activeRoom) {
+  try {
+    localStorage.setItem(
+      "initium_session",
+      JSON.stringify({
+        campaign,
+        view,
+        activeRoom: activeRoom || null,
+        lastActivity: Date.now(),
+      }),
+    );
+  } catch (e) {}
+}
+
+function loadSession() {
+  try {
+    const raw = localStorage.getItem("initium_session");
+    if (!raw) return null;
+    const session = JSON.parse(raw);
+    const elapsed = Date.now() - (session.lastActivity || 0);
+    if (elapsed > SESSION_TIMEOUT_MS) {
+      // Passou tempo demais — volta à home mas mantém a campanha
+      return { ...session, view: "home", activeRoom: null };
+    }
+    return session;
+  } catch (e) {
+    return null;
+  }
+}
+
+function clearSession() {
+  try {
+    localStorage.removeItem("initium_session");
+  } catch (e) {}
+}
+
 // ─────────────────────────────────────────────────────────────
 //  APP ROOT — sessão persistida pelo Firebase Auth
 // ─────────────────────────────────────────────────────────────
 export default function App() {
   // null  = verificando sessão | false = não logado | object = logado
   const [user, setUser] = useState(null);
-  const [view, setView] = useState("home");
-  const [activeRoom, setActiveRoom] = useState(null);
+  const savedSession = loadSession();
+
+  const [activeCampaign, setActiveCampaign] = useState(
+    savedSession?.campaign || null,
+  );
+  const [view, setView] = useState(savedSession?.view || "home");
+  const [activeRoom, setActiveRoom] = useState(
+    savedSession?.activeRoom || null,
+  );
   const [counts, setCounts] = useState({
     characters: 0,
     enemies: 0,
     events: 0,
     rooms: 0,
   });
-  const [activeCampaign, setActiveCampaign] = useState(null);
 
   // ── Persiste sessão com onAuthStateChanged ────────────────
   //
@@ -5953,9 +5996,16 @@ export default function App() {
     };
   }, [user, activeCampaign]);
 
+  useEffect(() => {
+    if (!activeCampaign) return;
+    saveSession(activeCampaign, view, activeRoom);
+  }, [activeCampaign, view, activeRoom]);
+
   const handleLogout = async () => {
     await signOut(auth);
+    clearSession();
     setUser(false);
+    setActiveCampaign(null);
     setView("home");
     setActiveRoom(null);
   };
@@ -5981,7 +6031,10 @@ export default function App() {
           setView={setView}
           onLogout={handleLogout}
           campaign={activeCampaign}
-          onChangeCampaign={() => setActiveCampaign(null)}
+          onChangeCampaign={() => {
+            setActiveCampaign(null);
+            clearSession();
+          }}
         />
       )}
       {view === "characters" && (
