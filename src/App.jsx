@@ -182,6 +182,7 @@ const TABLE_SYSTEMS = [
   { id: "pathfinder", name: "Pathfinder 2e", icon: "fi fi-rr-map" },
   { id: "cthulhu", name: "Call of Cthulhu", icon: "fi fi-rr-eye" },
   { id: "vampiro", name: "Vampiro: A Máscara", icon: "fi fi-rr-blood" },
+  { id: "hollowknight", name: "Hollow Knight", icon: "fi fi-rr-bug" },
 ];
 
 const DICE = [4, 6, 8, 10, 12, 20, 53, 100];
@@ -304,6 +305,31 @@ const SHEET_TEMPLATES = {
       "Subterfúgio",
     ],
   },
+  hollowknight: {
+    stats: ["PODER", "INTUIÇÃO", "CASCO", "GRAÇA"],
+    fields: [
+      "Espécie",
+      "Tamanho",
+      "Origem",
+      "Traços Físicos",
+      "Amuletos Equipados",
+    ],
+    extras: ["Vida", "Alma", "Stamina", "Geo", "Entalhes de Amuleto"],
+    abilities: [
+      "Arte de Unghia",
+      "Feitiço: Bola de Alma",
+      "Feitiço: Mergulho Sombrio",
+      "Feitiço: Despertar das Asas",
+      "Esquiva",
+      "Aparar",
+      "Furtividade",
+      "Conhecimento Arcano",
+      "Comunicação",
+      "Sobrevivência",
+      "Fabricar Amuletos",
+      "Resistência à Infecção",
+    ],
+  },
 };
 
 const MONTHS = [
@@ -329,26 +355,29 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 // Karma de dados — corrige sequências extremas de má sorte
 // sem garantir valores altos nem tornar o sistema previsível
 const diceKarma = {
-  history: [], // últimas 6 rolagens normalizadas (0-1)
+  history: [],
   get correction() {
-    if (this.history.length < 4) return 0;
-    const recent = this.history.slice(-6);
+    if (this.history.length < 3) return 0;
+    const recent = this.history.slice(-8);
     const avg = recent.reduce((a, b) => a + b, 0) / recent.length;
-    const expected = 0.5; // média esperada numa distribuição uniforme
+    const expected = 0.5;
     const diff = expected - avg;
-    // Correcção máxima de ±12% — subtil mas perceptível após sequências extremas
-    return Math.max(-0.12, Math.min(0.16, diff * 0.4));
+    // Correcção base de até ±20%
+    const base = Math.max(-0.2, Math.min(0.2, diff * 0.55));
+    // Bónus extra se a sequência de azar for muito longa (mais de 5 rolagens baixas seguidas)
+    const lowStreak = this.history.slice(-5).filter((v) => v < 0.35).length;
+    const streakBonus = lowStreak >= 4 ? 0.08 : lowStreak >= 3 ? 0.04 : 0;
+    return base + streakBonus;
   },
   record(normalized) {
     this.history.push(normalized);
-    if (this.history.length > 8) this.history.shift();
+    if (this.history.length > 10) this.history.shift();
   },
 };
 
 const rollDie = (s) => {
   const base = Math.random();
   const correction = diceKarma.correction;
-  // Aplica correcção e mantém dentro dos limites [0, 1)
   const adjusted = Math.max(0, Math.min(0.9999, base + correction));
   const result = Math.floor(adjusted * s) + 1;
   diceKarma.record(result / s);
@@ -707,7 +736,9 @@ function HomeScreen({
   campaign,
   onChangeCampaign,
 }) {
-  const isMaster = (user.role === "master" && campaign?.masterId === user.uid) || isDevUser(user);
+  const isMaster =
+    (user.role === "master" && campaign?.masterId === user.uid) ||
+    isDevUser(user);
   return (
     <div>
       <div className="nav">
@@ -1177,7 +1208,9 @@ function CharactersScreen({ user, setView, campaign }) {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
   const [creating, setCreating] = useState(false);
-  const isMaster = (user.role === "master" && campaign.masterId === user.uid) || isDevUser(user);
+  const isMaster =
+    (user.role === "master" && campaign.masterId === user.uid) ||
+    isDevUser(user);
 
   useEffect(() => {
     const q = isDevUser(user)
@@ -1882,7 +1915,9 @@ function EnemiesScreen({ user, setView, campaign }) {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
   const [creating, setCreating] = useState(false);
-  const isMaster = (user.role === "master" && campaign.masterId === user.uid) || isDevUser(user);
+  const isMaster =
+    (user.role === "master" && campaign.masterId === user.uid) ||
+    isDevUser(user);
 
   useEffect(() => {
     const q = isDevUser(user)
@@ -1956,7 +1991,7 @@ function EnemiesScreen({ user, setView, campaign }) {
             <div
               key={e.firestoreId}
               className="card mb12"
-              onClick={() => isMaster ? setEditing(e) : null}
+              onClick={() => (isMaster ? setEditing(e) : null)}
               style={{
                 cursor: isMaster ? "pointer" : "default",
                 borderColor: e.isBoss ? "rgba(192,57,43,.4)" : "var(--border)",
@@ -2779,6 +2814,7 @@ const SYSTEM_INIT_DICE = {
   deadlands: [4, 6, 8, 10, 12],
   cthulhu: [10],
   vampiro: [10],
+  hollowknight: [6],
 };
 // Todos os dados disponíveis para iniciativa (sempre mostrados)
 const ALL_INIT_DICE = [4, 6, 8, 10, 12, 20, 53, 100];
