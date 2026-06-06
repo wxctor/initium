@@ -326,7 +326,34 @@ const WEEKDAYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 //  UTILS
 // ─────────────────────────────────────────────────────────────
 const uid = () => Math.random().toString(36).slice(2, 10);
-const rollDie = (s) => Math.floor(Math.random() * s) + 1;
+// Karma de dados — corrige sequências extremas de má sorte
+// sem garantir valores altos nem tornar o sistema previsível
+const diceKarma = {
+  history: [], // últimas 6 rolagens normalizadas (0-1)
+  get correction() {
+    if (this.history.length < 4) return 0;
+    const recent = this.history.slice(-6);
+    const avg = recent.reduce((a, b) => a + b, 0) / recent.length;
+    const expected = 0.5; // média esperada numa distribuição uniforme
+    const diff = expected - avg;
+    // Correcção máxima de ±12% — subtil mas perceptível após sequências extremas
+    return Math.max(-0.12, Math.min(0.16, diff * 0.4));
+  },
+  record(normalized) {
+    this.history.push(normalized);
+    if (this.history.length > 8) this.history.shift();
+  },
+};
+
+const rollDie = (s) => {
+  const base = Math.random();
+  const correction = diceKarma.correction;
+  // Aplica correcção e mantém dentro dos limites [0, 1)
+  const adjusted = Math.max(0, Math.min(0.9999, base + correction));
+  const result = Math.floor(adjusted * s) + 1;
+  diceKarma.record(result / s);
+  return result;
+};
 const statMod = (v) => {
   const m = Math.floor((parseInt(v || 10) - 10) / 2);
   return (m >= 0 ? "+" : "") + m;
@@ -680,7 +707,7 @@ function HomeScreen({
   campaign,
   onChangeCampaign,
 }) {
-  const isMaster = user.role === "master";
+  const isMaster = (user.role === "master" && campaign?.masterId === user.uid) || isDevUser(user);
   return (
     <div>
       <div className="nav">
@@ -1150,7 +1177,7 @@ function CharactersScreen({ user, setView, campaign }) {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
   const [creating, setCreating] = useState(false);
-  const isMaster = user.role === "master";
+  const isMaster = (user.role === "master" && campaign.masterId === user.uid) || isDevUser(user);
 
   useEffect(() => {
     const q = isDevUser(user)
@@ -1855,6 +1882,7 @@ function EnemiesScreen({ user, setView, campaign }) {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
   const [creating, setCreating] = useState(false);
+  const isMaster = (user.role === "master" && campaign.masterId === user.uid) || isDevUser(user);
 
   useEffect(() => {
     const q = isDevUser(user)
@@ -1928,9 +1956,9 @@ function EnemiesScreen({ user, setView, campaign }) {
             <div
               key={e.firestoreId}
               className="card mb12"
-              onClick={() => setEditing(e)}
+              onClick={() => isMaster ? setEditing(e) : null}
               style={{
-                cursor: "pointer",
+                cursor: isMaster ? "pointer" : "default",
                 borderColor: e.isBoss ? "rgba(192,57,43,.4)" : "var(--border)",
               }}
             >
