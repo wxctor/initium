@@ -404,6 +404,25 @@ function buildCalDays(year, month) {
   return cells;
 }
 
+function sanitize(str, maxLen = 200) {
+  if (typeof str !== "string") return "";
+  return str.trim().slice(0, maxLen).replace(/[<>]/g, ""); // remove < e > para prevenir injecção de HTML
+}
+
+function validateForm(data, rules) {
+  const errors = [];
+  for (const [field, { max, required, label }] of Object.entries(rules)) {
+    const val = data[field];
+    if (required && (!val || !String(val).trim())) {
+      errors.push(`${label} é obrigatório.`);
+    }
+    if (val && String(val).length > max) {
+      errors.push(`${label} tem máximo de ${max} caracteres.`);
+    }
+  }
+  return errors;
+}
+
 // ─────────────────────────────────────────────────────────────
 //  COMPRESSÃO DE IMAGEM
 //  Usa Canvas API para redimensionar e comprimir antes de salvar.
@@ -568,6 +587,8 @@ const isDevUser = (user) => user?.role === "dev";
 //  pelo auth.js e o que está salvo no Firestore.
 // ─────────────────────────────────────────────────────────────
 function AuthScreen() {
+  const INVITE_CODE = "INITIUM2025"; // muda para o que quiseres, guarda só contigo
+  const [inviteCode, setInviteCode] = useState("");
   const [modeVal, setModeVal] = useState("login");
   const [role, setRole] = useState("player");
   const [form, setForm] = useState({ name: "", email: "", password: "" });
@@ -583,6 +604,11 @@ function AuthScreen() {
       // Apenas dispara o login/registro.
       // O onAuthStateChanged no App detecta o usuário autenticado
       // e lê o perfil completo (com role) do Firestore.
+      if (modeVal === "register") {
+        if (inviteCode.trim().toUpperCase() !== INVITE_CODE) {
+          return setErr("Código de convite inválido.");
+        }
+      }
       if (modeVal === "login") {
         await fbLogin(form.email, form.password);
       } else {
@@ -683,6 +709,17 @@ function AuthScreen() {
           )}
           {modeVal === "register" && (
             <div className="mb12">
+              <div className="label">Código de Convite</div>
+              <input
+                type="password"
+                placeholder="Código fornecido pelo administrador"
+                value={inviteCode}
+                onChange={(e) => setInviteCode(e.target.value)}
+              />
+            </div>
+          )}
+          {modeVal === "register" && (
+            <div className="mb12">
               <div className="label">Nome</div>
               <input
                 placeholder="Teu nome de aventureiro"
@@ -735,6 +772,8 @@ function HomeScreen({
   onLogout,
   campaign,
   onChangeCampaign,
+  showSettings,
+  setShowSettings,
 }) {
   const isMaster =
     (user.role === "master" && campaign?.masterId === user.uid) ||
@@ -785,11 +824,11 @@ function HomeScreen({
         </span>
         <button
           className="btn-icon"
-          title="Sair"
-          onClick={onLogout}
+          title="Configurações"
+          onClick={() => setShowSettings(true)}
           style={{ fontSize: 13 }}
         >
-          <i className="fi fi-rr-power"></i>
+          <i className="fi fi-rr-settings"></i>
         </button>
         <button
           className="btn-icon"
@@ -892,6 +931,8 @@ function CharacterForm({ user, onSave, onBack, initial, campaign }) {
       maxHp: "20",
       notes: "",
       backstory: "",
+      attacks: "",
+      specialAbilities: "",
     };
   };
 
@@ -908,15 +949,30 @@ function CharacterForm({ user, onSave, onBack, initial, campaign }) {
   };
 
   const save = async () => {
-    if (!form.name.trim()) return;
-    setSaving(true);
+    // Valida antes de tudo
+    const errors = validateForm(
+      { name: form.name, notes: form.notes, backstory: form.backstory },
+      {
+        name: { max: 60, required: true, label: "Nome" },
+        notes: { max: 2000, required: false, label: "Anotações" },
+        backstory: { max: 3000, required: false, label: "História" },
+      },
+    );
+    if (errors.length > 0) return alert(errors[0]);
+
+    // Sanitiza os dados antes de enviar
     const data = clean({
       ...form,
+      name: sanitize(form.name, 60),
+      notes: sanitize(form.notes, 2000),
+      backstory: sanitize(form.backstory, 3000),
       system: sys,
       ownerId: initial?.ownerId || user.uid,
       ownerName: initial?.ownerName || user.name,
       updatedAt: Date.now(),
     });
+    if (!form.name.trim()) return;
+    setSaving(true);
     try {
       if (initial?.firestoreId) {
         await updateDoc(doc(db, "characters", initial.firestoreId), data);
@@ -936,7 +992,14 @@ function CharacterForm({ user, onSave, onBack, initial, campaign }) {
   };
 
   const tmpl = SHEET_TEMPLATES[sys];
-  const tabs = ["Sistema", "Atributos", "Extras", "Perícias", "Notas"];
+  const tabs = [
+    "Sistema",
+    "Atributos",
+    "Extras",
+    "Perícias",
+    "Combate",
+    "Notas",
+  ];
 
   return (
     <div>
@@ -1172,6 +1235,33 @@ function CharacterForm({ user, onSave, onBack, initial, campaign }) {
         )}
 
         {tab === 4 && (
+          <div>
+            <div className="mb12">
+              <div className="label">Ataques</div>
+              <textarea
+                rows={4}
+                value={form.attacks || ""}
+                onChange={(e) => upd("attacks", e.target.value)}
+                placeholder={
+                  "Ex: Espada +5, 1d8+3 cortante\nArco +4, 1d6+2 perfurante"
+                }
+                style={{ resize: "vertical" }}
+              />
+            </div>
+            <div>
+              <div className="label">Habilidades Especiais</div>
+              <textarea
+                rows={4}
+                value={form.specialAbilities || ""}
+                onChange={(e) => upd("specialAbilities", e.target.value)}
+                placeholder="Descreve habilidades, magias, talentos especiais..."
+                style={{ resize: "vertical" }}
+              />
+            </div>
+          </div>
+        )}
+
+        {tab === 5 && (
           <div>
             <div className="mb12">
               <div className="label">História</div>
@@ -1473,14 +1563,44 @@ function EnemyForm({ user, onSave, onBack, initial, campaign }) {
   };
 
   const save = async () => {
-    if (!form.name?.trim()) return;
-    setSaving(true);
+    // Valida antes de tudo
+    const errors = validateForm(
+      {
+        name: form.name,
+        notes: form.notes,
+        attacks: form.attacks,
+        specialAbilities: form.specialAbilities,
+        loot: form.loot,
+      },
+      {
+        name: { max: 60, required: true, label: "Nome" },
+        notes: { max: 2000, required: false, label: "Anotações" },
+        attacks: { max: 3000, required: false, label: "Ataques" },
+        specialAbilities: {
+          max: 3000,
+          required: false,
+          label: "Habilidades Especiais",
+        },
+        loot: { max: 3000, required: false, label: "Loot" },
+      },
+    );
+    if (errors.length > 0) return alert(errors[0]);
+
+    // Sanitiza os dados antes de enviar
     const data = clean({
       ...form,
+      name: sanitize(form.name, 60),
+      notes: sanitize(form.notes, 2000),
+      attacks: sanitize(form.attacks, 3000),
+      specialAbilities: sanitize(form.specialAbilities, 3000),
+      loot: sanitize(form.loot, 3000),
       system: sys,
-      creatorId: user.uid,
+      ownerId: initial?.ownerId || user.uid,
+      ownerName: initial?.ownerName || user.name,
       updatedAt: Date.now(),
     });
+    if (!form.name?.trim()) return;
+    setSaving(true);
     try {
       if (initial?.firestoreId) {
         await updateDoc(doc(db, "enemies", initial.firestoreId), data);
@@ -5933,6 +6053,667 @@ function clearSession() {
   } catch (e) {}
 }
 
+const IMAGE_MAX_SIZE_MB = 5;
+const ALLOWED_MAGIC = [
+  [0xff, 0xd8, 0xff],
+  [0x89, 0x50, 0x4e, 0x47],
+  [0x47, 0x49, 0x46],
+  [0x52, 0x49, 0x46, 0x46],
+];
+
+function validateImageFile(file) {
+  return new Promise((resolve, reject) => {
+    if (file.size > IMAGE_MAX_SIZE_MB * 1024 * 1024) {
+      return reject(
+        new Error(`Imagem muito grande. Máximo: ${IMAGE_MAX_SIZE_MB}MB.`),
+      );
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const bytes = new Uint8Array(e.target.result).slice(0, 4);
+      const valid = ALLOWED_MAGIC.some((magic) =>
+        magic.every((byte, i) => bytes[i] === byte),
+      );
+      if (!valid)
+        return reject(
+          new Error("Ficheiro inválido. Apenas imagens são permitidas."),
+        );
+      resolve();
+    };
+    reader.onerror = () => reject(new Error("Erro ao ler ficheiro."));
+    reader.readAsArrayBuffer(file.slice(0, 4));
+  });
+}
+
+function SettingsScreen({ user, onClose, onLogout, onUserUpdate }) {
+  const [name, setName] = useState(user.name || "");
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [avatarUrl, setAvatarUrl] = useState(user.avatarUrl || null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+
+  const [myChars, setMyChars] = useState([]);
+  const [campaigns, setCampaigns] = useState({});
+  const [loadingChars, setLoadingChars] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    setLoadingChars(true);
+
+    const load = async () => {
+      try {
+        const q = query(
+          collection(db, "characters"),
+          where("ownerId", "==", user.uid),
+          orderBy("createdAt", "desc"),
+        );
+        const snap = await getDocs(q);
+        if (!mounted) return;
+
+        const chars = snap.docs.map((d) => ({
+          firestoreId: d.id,
+          ...d.data(),
+        }));
+        setMyChars(chars);
+
+        const campaignIds = [
+          ...new Set(chars.map((c) => c.campaignId).filter(Boolean)),
+        ];
+        const campMap = {};
+        for (const id of campaignIds) {
+          if (!mounted) return;
+          try {
+            const campSnap = await getDoc(doc(db, "campaigns", id));
+            if (campSnap.exists() && mounted)
+              campMap[id] = campSnap.data().name;
+          } catch (e) {}
+        }
+        if (mounted) {
+          setCampaigns(campMap);
+          setLoadingChars(false);
+        }
+      } catch (e) {
+        if (mounted) setLoadingChars(false);
+      }
+    };
+
+    load();
+    return () => {
+      mounted = false;
+    };
+  }, [user.uid]);
+
+  const hasEditedName = user.nameEdited === true;
+
+  const saveName = async () => {
+    if (hasEditedName) return;
+    if (!name.trim()) return setMsg("Nome não pode estar vazio.");
+    if (name.trim() === user.name) return setMsg("O nome é igual ao atual.");
+    setSaving(true);
+    try {
+      await updateDoc(doc(db, "users", user.uid), {
+        name: sanitize(name.trim(), 60),
+        nameEdited: true,
+      });
+      onUserUpdate({ ...user, name: name.trim(), nameEdited: true });
+      setMsg("Nome atualizado com sucesso!");
+    } catch (e) {
+      setMsg("Erro ao salvar: " + e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAvatarFile = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setUploadingAvatar(true);
+    try {
+      await validateImageFile(file);
+      const b64 = await compressImage(file, 200, 200, 0.85);
+      await updateDoc(doc(db, "users", user.uid), { avatarUrl: b64 });
+      setAvatarUrl(b64);
+      onUserUpdate({ ...user, avatarUrl: b64 });
+      setMsg("Foto atualizada!");
+    } catch (err) {
+      setMsg(err.message);
+    } finally {
+      setUploadingAvatar(false);
+      e.target.value = "";
+    }
+  };
+
+  const removeAvatar = async () => {
+    setSaving(true);
+    try {
+      await updateDoc(doc(db, "users", user.uid), { avatarUrl: null });
+      setAvatarUrl(null);
+      onUserUpdate({ ...user, avatarUrl: null });
+      setMsg("Foto removida.");
+    } catch (e) {
+      setMsg("Erro: " + e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const avatarInputRef = useRef();
+
+  const roleLabel = isDevUser(user)
+    ? "DEV"
+    : user.role === "master"
+      ? "Mestre"
+      : "Jogador";
+  const roleColor = isDevUser(user)
+    ? "#a78bfa"
+    : user.role === "master"
+      ? "#e87890"
+      : "#7aadff";
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div
+        className="modal-sheet"
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxHeight: "92vh" }}
+      >
+        <div className="modal-handle" />
+
+        {/* Header */}
+        <div className="flex-between mb16">
+          <h3 style={{ fontSize: 16 }}>Minha Conta</h3>
+          <button
+            className="btn-icon"
+            style={{ width: 32, height: 32 }}
+            onClick={onClose}
+          >
+            <i className="fi fi-rr-cross-small"></i>
+          </button>
+        </div>
+
+        {/* Avatar */}
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            marginBottom: 20,
+          }}
+        >
+          <div
+            onClick={() => !uploadingAvatar && avatarInputRef.current.click()}
+            style={{
+              width: 90,
+              height: 90,
+              borderRadius: "50%",
+              border: `2px solid ${isDevUser(user) ? "#a78bfa" : user.role === "master" ? "var(--red-l)" : "var(--blue-l)"}`,
+              background: avatarUrl
+                ? `url(${avatarUrl}) center/cover no-repeat`
+                : "var(--surface)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              fontSize: 36,
+              marginBottom: 8,
+              boxShadow: "0 4px 16px rgba(0,0,0,.4)",
+              overflow: "hidden",
+            }}
+          >
+            {!avatarUrl &&
+              !uploadingAvatar &&
+              (isDevUser(user) ? (
+                <i
+                  className="fi fi-rr-settings"
+                  style={{ color: "#a78bfa", fontSize: 36 }}
+                ></i>
+              ) : user.role === "master" ? (
+                <i
+                  className="fi fi-rr-eye"
+                  style={{ color: "var(--gold)", fontSize: 36 }}
+                ></i>
+              ) : (
+                <i
+                  className="fi fi-rr-shield"
+                  style={{ color: "#7aadff", fontSize: 36 }}
+                ></i>
+              ))}
+            {uploadingAvatar && (
+              <div
+                className="spinner"
+                style={{ width: 28, height: 28, borderWidth: 2 }}
+              />
+            )}
+          </div>
+
+          <div
+            style={{
+              fontFamily: "Cinzel,serif",
+              fontSize: 14,
+              color: "var(--text)",
+              marginBottom: 2,
+            }}
+          >
+            {user.name}
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              color: roleColor,
+              fontFamily: "Cinzel,serif",
+              marginBottom: 10,
+            }}
+          >
+            {roleLabel}
+          </div>
+
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              className="btn-outline btn-sm"
+              style={{ fontSize: 11 }}
+              onClick={() => avatarInputRef.current.click()}
+              disabled={uploadingAvatar}
+            >
+              <i className="fi fi-rr-camera" style={{ marginRight: 4 }}></i>
+              {avatarUrl ? "Trocar foto" : "Adicionar foto"}
+            </button>
+            {avatarUrl && (
+              <button
+                className="btn-sm"
+                style={{
+                  background: "transparent",
+                  border: "1px solid var(--red)",
+                  color: "var(--red)",
+                  fontSize: 11,
+                  padding: "7px 12px",
+                }}
+                onClick={removeAvatar}
+                disabled={saving}
+              >
+                <i
+                  className="fi fi-rr-cross-small"
+                  style={{ marginRight: 3 }}
+                ></i>
+                Remover
+              </button>
+            )}
+          </div>
+          <input
+            ref={avatarInputRef}
+            type="file"
+            accept="image/*"
+            style={{ display: "none" }}
+            onChange={handleAvatarFile}
+          />
+        </div>
+
+        <hr
+          style={{
+            border: "none",
+            borderTop: "1px solid var(--border)",
+            marginBottom: 16,
+          }}
+        />
+
+        {/* Nome */}
+        <div className="mb16">
+          <div className="label mb4">Nome de Aventureiro</div>
+          {hasEditedName ? (
+            <div>
+              <div
+                style={{
+                  background: "var(--surface)",
+                  border: "1px solid var(--border)",
+                  borderRadius: "var(--radius)",
+                  padding: "10px 12px",
+                  color: "var(--text)",
+                  fontSize: 15,
+                  marginBottom: 6,
+                }}
+              >
+                {user.name}
+              </div>
+              <div
+                className="muted"
+                style={{
+                  fontSize: 12,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+              >
+                <i className="fi fi-rr-lock" style={{ fontSize: 11 }}></i>O nome
+                só pode ser alterado uma vez.
+              </div>
+            </div>
+          ) : (
+            <div>
+              <input
+                value={name}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  setMsg("");
+                }}
+                placeholder="Teu nome de aventureiro"
+                maxLength={60}
+                style={{ marginBottom: 6 }}
+              />
+              <div
+                className="muted"
+                style={{
+                  fontSize: 11,
+                  marginBottom: 10,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 5,
+                }}
+              >
+                <i
+                  className="fi fi-rr-info"
+                  style={{ fontSize: 11, color: "var(--gold)" }}
+                ></i>
+                Atenção: o nome só poderá ser alterado{" "}
+                <strong style={{ color: "var(--gold)" }}>uma vez</strong>.
+              </div>
+              <button
+                className="btn-gold btn-sm"
+                onClick={saveName}
+                disabled={saving}
+                style={{ width: "100%" }}
+              >
+                {saving ? "Salvando..." : "Confirmar nome"}
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Info da conta */}
+        <div className="card2 mb16">
+          <div className="label mb8">Informações da Conta</div>
+          <div className="flex-between mb8">
+            <span style={{ color: "var(--text2)", fontSize: 13 }}>Email</span>
+            <span
+              style={{
+                color: "var(--text)",
+                fontSize: 13,
+                maxWidth: 180,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {user.email || "—"}
+            </span>
+          </div>
+          <div className="flex-between">
+            <span style={{ color: "var(--text2)", fontSize: 13 }}>Papel</span>
+            <span
+              style={{
+                color: roleColor,
+                fontSize: 13,
+                fontFamily: "Cinzel,serif",
+              }}
+            >
+              {roleLabel}
+            </span>
+          </div>
+        </div>
+
+        {/* Mensagem de feedback */}
+        {msg && (
+          <div
+            style={{
+              padding: "10px 14px",
+              borderRadius: "var(--radius)",
+              fontSize: 13,
+              marginBottom: 16,
+              background:
+                msg.includes("sucesso") ||
+                msg.includes("atualiz") ||
+                msg.includes("removid")
+                  ? "rgba(26,74,42,.3)"
+                  : "rgba(155,35,53,.15)",
+              color:
+                msg.includes("sucesso") ||
+                msg.includes("atualiz") ||
+                msg.includes("removid")
+                  ? "#6aca90"
+                  : "#e05070",
+              border:
+                msg.includes("sucesso") ||
+                msg.includes("atualiz") ||
+                msg.includes("removid")
+                  ? "1px solid rgba(42,122,64,.5)"
+                  : "1px solid rgba(155,35,53,.4)",
+            }}
+          >
+            {msg}
+          </div>
+        )}
+
+        <hr
+          style={{
+            border: "none",
+            borderTop: "1px solid var(--border)",
+            marginBottom: 16,
+          }}
+        />
+
+        <hr
+          style={{
+            border: "none",
+            borderTop: "1px solid var(--border)",
+            marginBottom: 16,
+          }}
+        />
+
+        {/* Meus Personagens */}
+        <div className="mb16">
+          <div className="label mb10">Meus Personagens</div>
+          {loadingChars && <div className="muted small">Carregando...</div>}
+          {!loadingChars && myChars.length === 0 && (
+            <div className="muted small">Nenhum personagem criado ainda.</div>
+          )}
+          {!loadingChars &&
+            myChars.length > 0 &&
+            (() => {
+              // Agrupa por campanha
+              const grouped = {};
+              myChars.forEach((c) => {
+                const key = c.campaignId || "sem-campanha";
+                if (!grouped[key]) grouped[key] = [];
+                grouped[key].push(c);
+              });
+
+              return Object.entries(grouped).map(([campId, chars]) => (
+                <div key={campId} style={{ marginBottom: 12 }}>
+                  {/* Nome da campanha */}
+                  <div
+                    style={{
+                      fontSize: 10,
+                      fontFamily: "Cinzel,serif",
+                      color: "var(--text3)",
+                      letterSpacing: ".08em",
+                      marginBottom: 6,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 5,
+                    }}
+                  >
+                    <i className="fi fi-rr-map" style={{ fontSize: 10 }}></i>
+                    {campaigns[campId] || "Campanha desconhecida"}
+                  </div>
+
+                  {/* Cards dos personagens */}
+                  {chars.map((c) => {
+                    const sys = TABLE_SYSTEMS.find((s) => s.id === c.system);
+                    const pct = Math.max(
+                      0,
+                      Math.min(
+                        100,
+                        (parseInt(c.hp || 0) / parseInt(c.maxHp || 1)) * 100,
+                      ),
+                    );
+                    return (
+                      <div
+                        key={c.firestoreId}
+                        className="card2 mb6"
+                        style={{ padding: "10px 12px" }}
+                      >
+                        <div className="flex gap8">
+                          {/* Avatar */}
+                          <div
+                            style={{
+                              width: 36,
+                              height: 36,
+                              borderRadius: "50%",
+                              flexShrink: 0,
+                              border: "2px solid var(--border2)",
+                              background: "var(--surface)",
+                              overflow: "hidden",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontSize: 18,
+                            }}
+                          >
+                            {c.avatarUrl ? (
+                              <img
+                                src={c.avatarUrl}
+                                style={{
+                                  width: "100%",
+                                  height: "100%",
+                                  objectFit: "cover",
+                                }}
+                                alt=""
+                              />
+                            ) : c.avatar?.startsWith("fi ") ? (
+                              <i
+                                className={c.avatar}
+                                style={{ fontSize: 16 }}
+                              ></i>
+                            ) : (
+                              <i
+                                className="fi fi-rr-hat-wizard"
+                                style={{ fontSize: 16 }}
+                              ></i>
+                            )}
+                          </div>
+
+                          {/* Info */}
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div
+                              style={{
+                                fontFamily: "Cinzel,serif",
+                                fontSize: 13,
+                                color: "var(--gold)",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {c.name}
+                            </div>
+                            <div
+                              style={{
+                                color: "var(--text3)",
+                                fontSize: 11,
+                                marginBottom: 4,
+                              }}
+                            >
+                              {sys && (
+                                <i
+                                  className={sys.icon}
+                                  style={{ marginRight: 4, fontSize: 10 }}
+                                ></i>
+                              )}
+                              {sys?.name}
+                            </div>
+                            {/* Mini barra de HP */}
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 6,
+                              }}
+                            >
+                              <div
+                                style={{
+                                  flex: 1,
+                                  height: 4,
+                                  background: "var(--border)",
+                                  borderRadius: 2,
+                                  overflow: "hidden",
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    width: pct + "%",
+                                    height: "100%",
+                                    borderRadius: 2,
+                                    background:
+                                      "linear-gradient(90deg,#c0392b,#27ae60)",
+                                    transition: "width .3s",
+                                  }}
+                                />
+                              </div>
+                              <span
+                                style={{
+                                  fontSize: 10,
+                                  color: "var(--text3)",
+                                  fontFamily: "Cinzel,serif",
+                                  flexShrink: 0,
+                                }}
+                              >
+                                {c.hp}/{c.maxHp}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ));
+            })()}
+        </div>
+
+        {/* Logout */}
+        <button
+          onClick={() => {
+            if (
+              window.confirm(
+                "Tens a certeza que queres sair? Precisarás da senha para voltar.",
+              )
+            ) {
+              onClose();
+              onLogout();
+            }
+          }}
+          style={{
+            width: "100%",
+            padding: "12px",
+            borderRadius: "var(--radius)",
+            background: "rgba(155,35,53,.15)",
+            border: "1px solid rgba(155,35,53,.4)",
+            color: "#e05070",
+            fontFamily: "Cinzel,serif",
+            fontSize: 13,
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 8,
+          }}
+        >
+          <i className="fi fi-rr-power"></i>
+          Sair da Conta
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────
 //  APP ROOT — sessão persistida pelo Firebase Auth
 // ─────────────────────────────────────────────────────────────
@@ -5948,6 +6729,7 @@ export default function App() {
   const [activeRoom, setActiveRoom] = useState(
     savedSession?.activeRoom || null,
   );
+  const [showSettings, setShowSettings] = useState(false);
   const [counts, setCounts] = useState({
     characters: 0,
     enemies: 0,
@@ -6099,6 +6881,8 @@ export default function App() {
             setActiveCampaign(null);
             clearSession();
           }}
+          showSettings={showSettings}
+          setShowSettings={setShowSettings}
         />
       )}
       {view === "characters" && (
@@ -6136,6 +6920,14 @@ export default function App() {
           room={activeRoom}
           setView={setView}
           campaign={activeCampaign}
+        />
+      )}
+      {showSettings && user && (
+        <SettingsScreen
+          user={user}
+          onClose={() => setShowSettings(false)}
+          onLogout={handleLogout}
+          onUserUpdate={(updatedUser) => setUser(updatedUser)}
         />
       )}
     </div>
