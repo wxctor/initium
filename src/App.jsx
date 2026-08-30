@@ -32,7 +32,14 @@ import {
 import { ref, push, update, remove } from "firebase/database";
 
 // ── Firebase Auth helpers ─────────────────────────────────────
-import { onAuthStateChanged, signOut } from "firebase/auth";
+import {
+  getAuth,
+  onAuthStateChanged,
+  signOut,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  sendPasswordResetEmail, // ← adiciona esta linha
+} from "firebase/auth";
 
 // ── Flaticon UIcons CDN ─────────────
 const _fi = document.createElement("link");
@@ -587,6 +594,10 @@ const isDevUser = (user) => user?.role === "dev";
 //  pelo auth.js e o que está salvo no Firestore.
 // ─────────────────────────────────────────────────────────────
 function AuthScreen() {
+  const [showRecover, setShowRecover] = useState(false);
+  const [recoverEmail, setRecoverEmail] = useState("");
+  const [recoverMsg, setRecoverMsg] = useState("");
+  const [recoverLoading, setRecoverLoading] = useState(false);
   const INVITE_CODE = "INITIUM2025"; // muda para o que quiseres, guarda só contigo
   const [inviteCode, setInviteCode] = useState("");
   const [modeVal, setModeVal] = useState("login");
@@ -627,6 +638,35 @@ function AuthScreen() {
       setErr(msgs[e.code] || e.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const sendRecover = async () => {
+    if (!recoverEmail.trim()) return setRecoverMsg("Insere o teu email.");
+    setRecoverLoading(true);
+    try {
+      const actionCodeSettings = {
+        url: "https://wxctor.github.io/initium/",
+        handleCodeInApp: false,
+      };
+      await sendPasswordResetEmail(
+        auth,
+        recoverEmail.trim(),
+        actionCodeSettings,
+      );
+      setRecoverMsg(
+        "Email enviado! Verifica a tua caixa de entrada e a pasta de spam.",
+      );
+    } catch (e) {
+      const msgs = {
+        "auth/user-not-found": "Nenhuma conta com este email.",
+        "auth/invalid-email": "Email inválido.",
+        "auth/too-many-requests":
+          "Demasiadas tentativas. Aguarda alguns minutos.",
+      };
+      setRecoverMsg(msgs[e.code] || "Erro ao enviar email.");
+    } finally {
+      setRecoverLoading(false);
     }
   };
 
@@ -756,7 +796,79 @@ function AuthScreen() {
                 ? "Entrar na Taverna"
                 : "Forjar Conta"}
           </button>
+          {modeVal === "login" && (
+            <div style={{ textAlign: "center", marginTop: 14 }}>
+              <button
+                onClick={() => {
+                  setShowRecover(true);
+                  setRecoverMsg("");
+                  setRecoverEmail("");
+                }}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "var(--text3)",
+                  fontSize: 12,
+                  cursor: "pointer",
+                  textDecoration: "underline",
+                }}
+              >
+                Esqueceste a senha?
+              </button>
+            </div>
+          )}
         </div>
+        {showRecover && (
+          <div className="modal-overlay" onClick={() => setShowRecover(false)}>
+            <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-handle" />
+              <h3 style={{ fontSize: 16, marginBottom: 8 }}>Recuperar Senha</h3>
+              <p className="muted small mb16">
+                Insere o email da tua conta e enviaremos um link para
+                redefinires a senha.
+              </p>
+              <div className="mb12">
+                <div className="label">Email</div>
+                <input
+                  type="email"
+                  placeholder="email@exemplo.com"
+                  value={recoverEmail}
+                  onChange={(e) => setRecoverEmail(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && sendRecover()}
+                  autoComplete="email"
+                />
+              </div>
+              {recoverMsg && (
+                <div
+                  style={{
+                    padding: "10px 14px",
+                    borderRadius: "var(--radius)",
+                    fontSize: 13,
+                    marginBottom: 12,
+                    background: recoverMsg.includes("enviado")
+                      ? "rgba(26,74,42,.3)"
+                      : "rgba(155,35,53,.15)",
+                    color: recoverMsg.includes("enviado")
+                      ? "#6aca90"
+                      : "#e05070",
+                    border: recoverMsg.includes("enviado")
+                      ? "1px solid rgba(42,122,64,.5)"
+                      : "1px solid rgba(155,35,53,.4)",
+                  }}
+                >
+                  {recoverMsg}
+                </div>
+              )}
+              <button
+                className="btn-gold"
+                onClick={sendRecover}
+                disabled={recoverLoading}
+              >
+                {recoverLoading ? "Enviando..." : "Enviar Email"}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
